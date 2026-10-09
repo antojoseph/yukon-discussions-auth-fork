@@ -25,7 +25,8 @@
       "type": "string",
       "enum": [
         "enforce_cumulative_claims",
-        "cumulative"
+        "cumulative",
+        "remove_minimum_rebate"
       ]
     },
     "reasoning": {

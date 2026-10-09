@@ -29,12 +29,14 @@ def read(path):
 
 
 def validate_spec(spec):
-    if not isinstance(spec, dict) or set(spec) != {'schema_version', 'family', 'claim_limit'}:
+    if not isinstance(spec, dict) or set(spec) != {'schema_version', 'family', 'claim_limit', 'minimum_rebate'}:
         raise ValueError('Invalid base specification fields')
     if type(spec['schema_version']) is not int or spec['schema_version'] != 1 or spec['family'] != 'uniswap-v4-rebate-v1':
         raise ValueError('Unsupported specification version/family')
     if spec['claim_limit'] not in ('cumulative', 'per_call'):
         raise ValueError('Unsupported claim interpretation')
+    if type(spec['minimum_rebate']) is not int or spec['minimum_rebate'] not in (0, 1):
+        raise ValueError('Unsupported minimum rebate interpretation')
     return spec
 
 
@@ -79,11 +81,11 @@ def validate_repair(proposal, judgment, spec, contract):
     target = {'contract_defect': 'contract', 'spec_defect': 'spec'}.get(judgment['verdict'])
     if target is None or proposal['target'] != target:
         raise ValueError('Repair cannot change a target the judge did not authorize')
-    expected = 'enforce_cumulative_claims' if target == 'contract' else 'cumulative'
-    if proposal['change'] != expected or not isinstance(proposal['reasoning'], str) or not proposal['reasoning'].strip():
+    allowed_change = (proposal['change'] == 'enforce_cumulative_claims' and contract == 'seeded') if target == 'contract' else (
+        (proposal['change'] == 'cumulative' and spec['claim_limit'] == 'per_call') or
+        (proposal['change'] == 'remove_minimum_rebate' and spec['minimum_rebate'] == 1))
+    if not allowed_change or not isinstance(proposal['reasoning'], str) or not proposal['reasoning'].strip():
         raise ValueError('Unsupported repair or missing rationale')
-    if target == 'contract' and contract != 'seeded' or target == 'spec' and spec['claim_limit'] == 'cumulative':
-        raise ValueError('Repair is a no-op; needs interpretation review')
     return proposal
 
 
@@ -122,7 +124,7 @@ def render(state):
         j = r.get('judgment', {})
         repair = r.get('repair', {})
         sections.append(f'''<section><h2>Round {r['number']} · {esc(r.get('status', 'in progress'))}</h2>
-<p>Base specification: <b>{esc(r['spec']['claim_limit'])}</b> · Contract: <b>{esc(r['contract'])}</b></p>
+<p>Base specification: <b>{esc(r['spec']['claim_limit'])}</b> claims, minimum rebate <b>{esc(r['spec']['minimum_rebate'])}</b> · Contract: <b>{esc(r['contract'])}</b></p>
 <table><tr><th>Evidence</th><th>Call</th><th>EVM outcome</th><th>Spec prediction</th><th>A paid</th><th>Custody</th></tr>{rows}</table>
 <h3>Independent judge · {esc(j.get('verdict', 'not run'))}</h3><p>{esc(j.get('reasoning', 'Execution and proof checks must complete first.'))}</p>
 <p>Citations: {esc(', '.join(j.get('evidence_ids', [])))} · {esc(', '.join(j.get('requirement_ids', [])))}</p>
@@ -238,7 +240,8 @@ def main():
                 source = patched; contract = 'patched'
                 (folder / 'proposed.sol').write_text(source)
             else:
-                spec = {**spec, 'claim_limit': 'cumulative'}
+                spec = {**spec, 'claim_limit': 'cumulative'} if proposal['change'] == 'cumulative' else {
+                    **spec, 'minimum_rebate': 0}
                 write(folder / 'proposed-spec.json', spec)
             # Replay the identical falsification before any fresh challenger gets a turn.
             print(f'Round {number}: recheck proposed {proposal["target"]} repair on the same calls', flush=True)

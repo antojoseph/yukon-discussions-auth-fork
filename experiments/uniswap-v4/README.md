@@ -14,6 +14,12 @@ The runner replays the same trace and checks applicable regressions and Lean
 evidence before another review round. All versions, patches, and decisions go
 under a new `runs/reproduced-*` or `runs/live-*` directory.
 
+The draft base spec has cumulative claim limits and a deliberately incorrect
+one-unit minimum rebate. Creator intent says to round half the fee down, so a
+one-unit fee earns zero rebate. The seeded contract has the separate repeated-
+claim defect. Participants submit transactions, not repair targets; the judge
+decides which artifact disagrees with the intent.
+
 With your authenticated Codex CLI account, a fresh judge/proposer run is:
 
 ```sh
@@ -39,6 +45,11 @@ python3 experiments/uniswap-v4/loop.py \
   --spec experiments/uniswap-v4/specs/per-call-draft.json --contract repaired \
   --trace experiments/uniswap-v4/fixtures/repeated-claim.json \
   --responses experiments/uniswap-v4/fixtures/spec-repair-responses.json
+
+# A one-unit fee falsifies the draft minimum-rebate specification.
+python3 experiments/uniswap-v4/loop.py \
+  --trace experiments/uniswap-v4/fixtures/minimum-rebate-trace.json \
+  --responses experiments/uniswap-v4/fixtures/minimum-rebate-spec-repair-responses.json
 ```
 
 `--responses` replays **hand-written fixture decisions**, not fresh LLM
@@ -46,7 +57,7 @@ judgments. It verifies the judge/repair schema, cited evidence, repair routing,
 concrete re-execution, regression checks, and formal checks. Those fixtures are
 mechanism tests, not evidence of independent agent reliability. The optional
 Codex path is the independent LLM test. The supported repair catalog is bounded
-to cumulative claim limits for this v4 family; arbitrary source patches or new
+to cumulative claim limits and removal of the draft minimum rebate; arbitrary source patches or new
 economic assumptions require a new reviewed version. A contract verdict emits a
 Solidity diff and revised source; a spec verdict emits a revised JSON spec. Both
 remain proposals with `accepted: false` and `creator_approval: pending`.
@@ -61,9 +72,9 @@ This branch supplies the isolated `antojoseph/spec-prove-v4-internal` developmen
 
 ## What is frozen
 
-`src/RebateHook.sol` implements a deliberately flawed custom hook and a repaired control. The target is the seeded variant (`repaired=false`). Both run with the pinned official Uniswap v4 PoolManager, Solidity 0.8.26, Foundry 1.7.1, and Lean 4.22.0. The defect belongs to our custom hook, not Uniswap. The host materializes a bounded contract patch or spec revision after the model's verdict; participants do not patch contracts.
+`src/RebateHook.sol` implements a deliberately flawed custom hook and a repaired control. The target is the seeded variant (`repaired=false`), while the base spec has an independent draft rounding mistake. Both run with the pinned official Uniswap v4 PoolManager, Solidity 0.8.26, Foundry 1.7.1, and Lean 4.22.0. The contract defect belongs to our custom hook, not Uniswap. The host materializes a bounded contract patch or spec revision after the model's verdict; participants do not patch contracts.
 
-On each exact-input swap the hook collects 1% of gross output, rounded down, and credits half that fee, rounded down, as rebate. R2 requires cumulative claims to stay within earned rebates. R3 requires each pool's payments to stay within its own collected fees. Requirements R1, R4 and R5 are regression-tested; this trace interface scores only R2 and R3.
+On each exact-input swap the hook collects 1% of gross output, rounded down, and credits half that fee, rounded down, as rebate. R1 includes that rounding rule. R2 requires cumulative claims to stay within earned rebates. R3 requires each pool's payments to stay within its own collected fees. R4 and R5 are regression-tested; this trace interface can demonstrate R1 spec or R2/R3 contract defects.
 
 ## Participate
 
@@ -88,10 +99,13 @@ participant without the host's model credentials can preflight a trace locally
 with `run.py` as shown below; this checks the EVM/Lean evidence but is not
 an LLM judgment or hosted score. `yukon run` requires the host model
 configuration and is intended for benchmark maintainers.
+For a specification challenge, `run.py` can report `objection_supported: false`
+because it checks contract violations, not the draft spec. Its EVM and Lean
+evidence still feed the hosted spec comparison and independent judge.
 
 Setup supports Linux x86_64 and macOS arm64. It downloads checksum-pinned runtimes and commit-pinned v4 dependencies. Python 3.9+, Git, curl and tar are required; Linux tar needs zstd for the Lean archive. For explicit installed runtimes, set `V4_FORGE`, `V4_LEAN`, and `V4_SOLC` during setup; their paths are persisted locally for the separate run command.
 
-Edit only `submission/trace.json`. The schema is `experiments/uniswap-v4/submission.schema.json`: one to 32 `swap` or `claim` actions on pool A or B, integer amounts from 1 to 10^12, and a claimed requirement R2 or R3. Prose is data and is never compiled. No arbitrary participant source code or Lean proof is accepted.
+Edit only `submission/trace.json`. The schema is `experiments/uniswap-v4/submission.schema.json`: one to 32 `swap` or `claim` actions on pool A or B, integer amounts from 1 to 10^12, and a cited requirement R1, R2 or R3. Prose is data and is never compiled. No arbitrary participant source code or Lean proof is accepted.
 
 ```sh
 # Example attack; inspect it before copying.
@@ -105,11 +119,13 @@ The note must be 5–100 KiB of useful Markdown describing the tested trace, rep
 
 ## Score and validation
 
-The non-violating baseline scores **0**. A supported submitted objection earns one point for each independently demonstrated requirement in the first concrete replay: R2 and R3, **maximum 2**, only if the independent judge identifies the contract defect, the trusted patch passes same-trace replay and regressions, the second review finds no remaining mismatch, and Lean checks pass. The provided repeated-claim fixture is expected to score **2** when those model judgments succeed. Unsupported claims and non-violating traces score 0. Invalid input, failed execution or proof, and unsuccessful repair verification produce **no score file**. This small ceiling is intentional for an internal end-to-end mechanism test, not a competitive research benchmark.
+Every completed, verified repair earns **one demo impact credit per submission**, including a specification repair. The judge must cite transaction and requirement evidence; the host changes only the judged artifact, replays the same trace, checks regressions and Lean evidence, and obtains a clean second review. The `verified_impact_credit` metric records that contribution for the demo to sum across submissions. Repeated traces can earn credit under this internal rule; the credit does not claim a new distinct defect.
+
+For Yukon compatibility, scalar `score` remains a per-submission measurement: a contract repair earns one point per demonstrated R2/R3 requirement (maximum 2), while a verified spec repair earns 1. A non-falsifying trace scores 0. Yukon promotes only a score strictly better than the standing record, so it can reject a verified repair that still earns demo credit. The repeated-claim fixture scores 2 and the one-unit-fee spec fixture scores 1 after successful hosted judgments. Invalid input, failed execution or proof, and unsuccessful repair verification produce **no score file**. Neither scalar is a security rating.
 
 The trusted adapter clears stale scores first, validates the input surface, runs the concrete EVM and Lean checks, sends evidence to tool-free host-funded GPT-6.1 Sol judge and repair roles through OpenRouter, applies only a closed validated edit, and repeats the EVM and Lean checks. The GitHub Actions runner requires the repository secret `SPEC_PROVE_OPENROUTER_API_KEY`. Missing host configuration fails closed with no score. Only the benchmark step receives the secret, after the editable-path check. Never put credentials in `submission/trace.json` or a public note. A promoted Yukon submission records the trace and hosted score; it does not approve a specification or contract.
 
-Scoring is evidence coverage, not contract acceptance. `accepted: false`, `creator_approval: pending`, and `contract_correspondence: not_proved` remain separate from Yukon's submission promotion status.
+Impact credit is evidence of a completed bounded repair workflow, not contract acceptance. `accepted: false`, `creator_approval: pending`, and `contract_correspondence: not_proved` remain separate from Yukon's submission promotion status.
 
 ## Evidence and limits
 

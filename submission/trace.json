@@ -1,13 +1,9 @@
 {
   "schema_version": 1,
   "family": "uniswap-v4-rebate-v1",
-  "requirement": "R2",
-  "description": "Swap 10000 on A (collect 99, earn 49) and 10000 on B (collect 99, earn 49), then claim 49 on pool A three times. The seeded hook checks each request against lifetime entitlement (49) instead of remaining entitlement, so all three succeed and pay 147 total: 147 > 49 earned demonstrates R2, and 147 > 99 collected on A demonstrates R3 because the third payment is backed by pool B's reserve (custody 198 -> 51, below B's 99). The repaired control pays 49 once and rejects the two repeats with no violation.",
+  "requirement": "R1",
+  "description": "A small swap collects a one-unit fee. Creator intent credits floor(1/2) = 0 rebate, but the draft base specification predicts a minimum rebate of 1. The transaction tests the specification without changing the contract.",
   "actions": [
-    {"op": "swap", "pool": "A", "amount": 10000},
-    {"op": "swap", "pool": "B", "amount": 10000},
-    {"op": "claim", "pool": "A", "amount": 49},
-    {"op": "claim", "pool": "A", "amount": 49},
-    {"op": "claim", "pool": "A", "amount": 49}
+    {"op": "swap", "pool": "A", "amount": 200}
   ]
 }

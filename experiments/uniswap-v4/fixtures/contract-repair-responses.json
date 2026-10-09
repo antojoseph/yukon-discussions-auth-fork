@@ -1,0 +1,34 @@
+[
+  {
+    "judge": {
+      "schema_version": 1,
+      "verdict": "contract_defect",
+      "evidence_ids": [
+        "tx-4",
+        "tx-5"
+      ],
+      "requirement_ids": [
+        "R2",
+        "R3"
+      ],
+      "reasoning": "The EVM pays claims two and three despite the cumulative entitlement requirement. Pool A pays 147 from 99 collected, consuming pool B backing. The cumulative base spec predicts rejection.",
+      "questions": []
+    },
+    "repair": {
+      "schema_version": 1,
+      "target": "contract",
+      "change": "enforce_cumulative_claims",
+      "reasoning": "Guard claims against prior user claims and pool payouts."
+    }
+  },
+  {
+    "judge": {
+      "schema_version": 1,
+      "verdict": "unsupported",
+      "evidence_ids": [],
+      "requirement_ids": [],
+      "reasoning": "No mismatch is demonstrated by the same trace after repair. This finite check does not grant creator approval.",
+      "questions": []
+    }
+  }
+]

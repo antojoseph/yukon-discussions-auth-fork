@@ -1,0 +1,35 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "target",
+    "change",
+    "reasoning"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "enum": [
+        1
+      ]
+    },
+    "target": {
+      "type": "string",
+      "enum": [
+        "contract",
+        "spec"
+      ]
+    },
+    "change": {
+      "type": "string",
+      "enum": [
+        "enforce_cumulative_claims",
+        "cumulative"
+      ]
+    },
+    "reasoning": {
+      "type": "string"
+    }
+  }
+}

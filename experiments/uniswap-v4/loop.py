@@ -202,9 +202,24 @@ def main():
             r['comparison'] = compare(spec, observed)
             write(folder / 'comparison.json', r['comparison'])
             payload.update(submission=submission, concrete_evidence=observed, comparison=r['comparison'], formal_scope=r['verification'])
+            payload['allowed_evidence_ids'] = [finding['id'] for finding in r['comparison']['findings']]
             print(f'Round {number}: independent semantic judgment', flush=True)
-            judgment = responses[i]['judge'] if responses else agent('judge', payload, folder / 'judge', args)
-            r['judgment'] = validate_judgment(judgment, r['comparison'])
+            if responses:
+                judgment = responses[i]['judge']
+                r['judgment'] = validate_judgment(judgment, r['comparison'])
+            else:
+                for attempt in range(2):
+                    judgment = agent('judge', payload, folder / ('judge-attempt-' + str(attempt + 1)), args)
+                    try:
+                        r['judgment'] = validate_judgment(judgment, r['comparison'])
+                        break
+                    except ValueError as error:
+                        if attempt:
+                            raise
+                        payload['previous_judgment'] = judgment
+                        payload['citation_correction'] = str(error) + '; only allowed_evidence_ids may appear in evidence_ids'
+                payload.pop('previous_judgment', None)
+                payload.pop('citation_correction', None)
             write(folder / 'judgment.json', judgment)
             if judgment['verdict'] in ('both', 'ambiguous'):
                 r['status'] = state['status'] = 'needs_creator_review'; break

@@ -2,9 +2,22 @@
   "schema_version": 1,
   "family": "uniswap-v4-rebate-v1",
   "requirement": "R2",
-  "description": "Non-violating baseline: one swap, followed by one claim within earned rebate.",
+  "description": "Two claims of 49 after a single pool-A swap demonstrate cumulative payout 98 above earned rebate 49. Pool-A collected fees remain sufficient; this trace isolates R2.",
   "actions": [
-    {"op": "swap", "pool": "A", "amount": 10000},
-    {"op": "claim", "pool": "A", "amount": 49}
+    {
+      "op": "swap",
+      "pool": "A",
+      "amount": 10000
+    },
+    {
+      "op": "claim",
+      "pool": "A",
+      "amount": 49
+    },
+    {
+      "op": "claim",
+      "pool": "A",
+      "amount": 49
+    }
   ]
 }

@@ -150,7 +150,7 @@ def save(out, state):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--spec', type=Path, default=run.BASE / 'specs/base.json')
-    parser.add_argument('--contract', choices=['seeded', 'repaired'], default='seeded')
+    parser.add_argument('--contract', choices=['seeded', 'repaired'])
     parser.add_argument('--trace', type=Path, help='Optional existing counterexample; otherwise an independent challenger proposes one each round')
     parser.add_argument('--responses', type=Path, help='Replay explicitly labeled saved judge/repair responses; no inference')
     parser.add_argument('--rounds', type=int, choices=range(1, 4), default=2)
@@ -159,8 +159,15 @@ def main():
     parser.add_argument('--timeout', type=int, default=240)
     parser.add_argument('--output', type=Path, default=run.ROOT / 'runs' / ('reproduced-v4-loop-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')))
     args = parser.parse_args()
-    spec = validate_spec(read(args.spec)); contract = args.contract
-    source = (run.BASE / 'src/RebateHook.sol').read_text()
+    baseline = read(run.BASE / 'baseline.json')
+    if (not isinstance(baseline, dict) or set(baseline) !=
+            {'schema_version', 'revision', 'contract', 'contract_source'} or
+            baseline['schema_version'] != 1 or type(baseline['revision']) is not int or baseline['revision'] < 0 or
+            (baseline['contract'], baseline['contract_source']) not in
+            (('seeded', 'src/RebateHook.sol'), ('patched', 'specs/active/RebateHook.sol'))):
+        raise ValueError('Invalid active baseline')
+    spec = validate_spec(read(args.spec)); contract = args.contract or baseline['contract']
+    source = (run.BASE / (baseline['contract_source'] if args.contract is None else 'src/RebateHook.sol')).read_text()
     intent = read(run.BASE / 'intent.json')
     responses = read(args.responses) if args.responses else None
     out = args.output.resolve()
@@ -168,6 +175,7 @@ def main():
         raise ValueError('Use a new runs/reproduced-* or runs/live-* directory')
     out.mkdir(exist_ok=False)
     state = dict(schema_version=1, status='running', accepted=False, creator_approval='pending',
+        baseline_revision=baseline['revision'],
         contract_correspondence='not_proved', deployment='none', intent=intent, intent_sha256=digest(intent),
         judge_mode='saved_responses_no_fresh_inference' if responses else
                    ('hosted_openrouter_tool_free_roles' if args.provider == 'openrouter' else 'live_independent_codex_contexts'),

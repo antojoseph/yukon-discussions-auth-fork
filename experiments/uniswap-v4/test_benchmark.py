@@ -22,51 +22,70 @@ class HostedTests(unittest.TestCase):
         return {'accepted': False, 'creator_approval': 'pending', 'contract_correspondence': 'not_proved',
                 'status': 'no_demonstrated_mismatch', 'rounds': [
                     {'status': 'repair_replayed_pending_review', 'verification': {'kernel_checked': True},
-                     'comparison': {'findings': findings}, 'judgment': {'verdict': 'contract_defect'},
+                     'comparison': {'findings': findings}, 'judgment': {'verdict': 'contract_defect',
+                     'evidence_ids': ['tx-4', 'tx-5'], 'requirement_ids': ['R2', 'R3']},
                      'repair': {'target': 'contract'}, 'repair_recheck': {'kernel_checked': True,
                      'comparison': {'findings': []}}},
                     {'status': 'no_demonstrated_mismatch', 'verification': {'kernel_checked': True},
                      'comparison': {'findings': []}, 'judgment': {'verdict': 'unsupported'}}]}
 
-    def test_completed_repair_scores_demonstrated_requirements(self):
+    def test_initial_judgment_credits_a_falsification_once(self):
         report = self.report()
-        self.assertEqual(benchmark.supported_score(report, 'R2'), 2)
-        self.assertEqual(benchmark.supported_score(report, 'R3'), 2)
-        self.assertEqual(benchmark.supported_score(report, 'R1'), 0)
+        self.assertEqual(benchmark.supported_falsification(report, 'R2'),
+                         ('contract', 'contract:cumulative_claims'))
+        self.assertEqual(benchmark.supported_falsification(report, 'R3'),
+                         ('contract', 'contract:cumulative_claims'))
+        self.assertIsNone(benchmark.supported_falsification(report, 'R1'))
 
-    def test_verified_spec_repair_earns_impact_credit(self):
+    def test_initial_spec_judgment_credits_a_falsification(self):
         report = copy.deepcopy(self.report())
         first = report['rounds'][0]
         first['comparison']['findings'] = [{'id': 'tx-1', 'intent_violations': [],
                                             'spec_mismatches': ['A_earned']}]
-        first['judgment'] = {'verdict': 'spec_defect', 'requirement_ids': ['R1']}
+        first['judgment'] = {'schema_version': 1, 'verdict': 'spec_defect',
+                             'requirement_ids': ['R1'], 'evidence_ids': ['tx-1'],
+                             'reasoning': 'The observed zero rebate contradicts the draft minimum.', 'questions': []}
         first['repair'] = {'target': 'spec', 'change': 'remove_minimum_rebate'}
-        self.assertEqual(benchmark.supported_score(report, 'R1'), 1)
-        self.assertEqual(benchmark.supported_score(report, 'R2'), 0)
+        self.assertEqual(benchmark.supported_falsification(report, 'R1'),
+                         ('spec', 'spec:minimum_rebate'))
+        self.assertIsNone(benchmark.supported_falsification(report, 'R2'))
         first['comparison']['findings'][0]['intent_violations'] = ['R2']
-        self.assertEqual(benchmark.supported_score(report, 'R1'), 0)
+        with self.assertRaisesRegex(ValueError, 'Spec defect requires'):
+            benchmark.supported_falsification(report, 'R1')
 
-    def test_missing_judgment_repair_replay_or_proof_fails_closed(self):
-        for path, value in [
-            (('accepted',), True), (('creator_approval',), 'approved'),
-            (('rounds', 0, 'repair_recheck', 'comparison', 'findings'), [{'id': 'tx-4'}]),
-            (('rounds', 1, 'verification', 'kernel_checked'), False),
-            (('rounds', 1, 'judgment', 'verdict'), 'contract_defect')]:
+    def test_repair_failure_does_not_erase_verified_falsification(self):
+        report = self.report()
+        for status in ('repair_failed_replay', 'failed', 'round_limit_with_unresolved_defect'):
+            changed = copy.deepcopy(report)
+            changed['status'] = status
+            changed['rounds'][0]['repair_recheck'] = {'comparison': {'findings': [{'id': 'tx-4'}]}}
+            changed['rounds'] = changed['rounds'][:1]
+            self.assertEqual(benchmark.supported_falsification(changed, 'R2'),
+                             ('contract', 'contract:cumulative_claims'))
+
+    def test_missing_initial_evidence_fails_closed(self):
+        for path, value in [(('accepted',), True), (('creator_approval',), 'approved'),
+                            (('rounds', 0, 'verification', 'kernel_checked'), False)]:
             report = copy.deepcopy(self.report())
             node = report
             for key in path[:-1]:
                 node = node[key]
             node[path[-1]] = value
             with self.assertRaises(ValueError):
-                benchmark.supported_score(report, 'R2')
+                benchmark.supported_falsification(report, 'R2')
         for path, value in [(('rounds', 0, 'judgment', 'verdict'), 'spec_defect'),
-                            (('rounds', 0, 'repair', 'target'), 'spec')]:
+                            (('rounds', 0, 'judgment', 'evidence_ids'), []),
+                            (('rounds', 0, 'judgment', 'verdict'), 'unsupported')]:
             report = copy.deepcopy(self.report())
             node = report
             for key in path[:-1]:
                 node = node[key]
             node[path[-1]] = value
-            self.assertEqual(benchmark.supported_score(report, 'R2'), 0)
+            if value == 'unsupported':
+                self.assertIsNone(benchmark.supported_falsification(report, 'R2'))
+            else:
+                with self.assertRaises(ValueError):
+                    benchmark.supported_falsification(report, 'R2')
 
     def test_participant_symlinks_and_extra_files_are_rejected(self):
         with tempfile.TemporaryDirectory() as d:

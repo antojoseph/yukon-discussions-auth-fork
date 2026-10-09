@@ -290,12 +290,19 @@ def main():
         if code: raise ValueError("Lean submission witness failed")
         check_axioms(raw, {"Rebate.submitted_replay"})
         inputs = sorted([*BASE.glob("src/*.sol"), *BASE.glob("lean/*.lean"), BASE / "test/RebateHook.t.sol",
-            BASE / "intent.json", BASE / "submission.schema.json", BASE / "dependencies.json", BASE / "foundry.toml", Path(__file__).resolve()])
+            BASE / "intent.json", BASE / "submission.schema.json", BASE / "dependencies.json", BASE / "foundry.toml",
+            BASE / "baseline.json", BASE / "specs/base.json", *BASE.glob("specs/active/*.sol"),
+            Path(__file__).resolve()])
         state["source_sha256"] = {str(p.relative_to(BASE)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
+        baseline = json.loads((BASE / 'baseline.json').read_text())
+        if baseline.get('contract') not in ('seeded', 'patched'):
+            raise ValueError('Invalid active contract baseline')
+        active_result = state['seeded' if baseline['contract'] == 'seeded' else 'repaired']
         state.update(validation_completed=True, kernel_checked=True, abstract_all_traces_invariant_proved=True,
                      concrete_abstract_replay_agree=True, description=submission["description"],
                      submitted_requirement=submission["requirement"],
-                     objection_supported=submission["requirement"] in state["seeded"]["violations"])
+                     baseline_revision=baseline['revision'],
+                     objection_supported=submission["requirement"] in active_result["violations"])
         (out / "report.html").write_text(report_page(state))
     except Exception as exc:
         state["error"] = str(exc)

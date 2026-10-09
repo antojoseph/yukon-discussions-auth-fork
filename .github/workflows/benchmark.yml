@@ -2,10 +2,10 @@ name: spec.prove v4 isolated benchmark
 on:
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 concurrency:
-  group: benchmark-${{ github.ref }}
-  cancel-in-progress: true
+  group: benchmark-specprove-v4-baseline
+  cancel-in-progress: false
 jobs:
   benchmark:
     runs-on: ubuntu-24.04
@@ -42,12 +42,54 @@ jobs:
                 ;;
             esac
           done < <(git diff --no-renames --name-only -z "$GITHUB_SHA^" "$GITHUB_SHA")
+      - name: Verify submission targets the current baseline
+        if: startsWith(github.ref, 'refs/heads/submissions/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin codex/specprove-v4-internal
+          if [[ "$(git rev-parse "$GITHUB_SHA^")" != "$(git rev-parse FETCH_HEAD)" ]]; then
+            echo "The baseline advanced after this trace was prepared; sync and resubmit it" >&2
+            exit 1
+          fi
       - name: Setup pinned runtimes and the isolated verifier
         run: bash .yukon/setup.sh
       - name: Benchmark (EVM evidence, independent judgment, proposed repair, replay and Lean)
         env:
           OPENROUTER_API_KEY: ${{ secrets.SPEC_PROVE_OPENROUTER_API_KEY }}
         run: python3 experiments/uniswap-v4/benchmark.py
+      - name: Advance verified repair into the next baseline
+        if: startsWith(github.ref, 'refs/heads/submissions/')
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          trap 'printf "{\"status\":\"failed\"}\n" > .yukon/baseline-promotion.json' ERR
+          read -r repair_verified report_path < <(python3 -c 'import json; m=json.load(open(".yukon/score.json"))["metrics"]; print(str(m["host_repair_verified"]).lower(), m["evidence"] + "/report.json")')
+          if [[ "$repair_verified" != true ]]; then
+            printf '{"status":"not_applicable"}\n' > .yukon/baseline-promotion.json
+            exit 0
+          fi
+          git fetch --no-tags origin codex/specprove-v4-internal
+          base_sha="$(git rev-parse FETCH_HEAD)"
+          if [[ "$base_sha" != "$(git rev-parse "$GITHUB_SHA^")" ]]; then
+            echo "Baseline moved during verification; do not apply a stale repair" >&2
+            exit 1
+          fi
+          next_checkout="$(mktemp -d)"
+          git worktree add --detach "$next_checkout" "$base_sha"
+          python3 experiments/uniswap-v4/advance_baseline.py --report "$report_path" --base "$next_checkout"
+          git -C "$next_checkout" add -A -- experiments/uniswap-v4
+          if git -C "$next_checkout" diff --cached --quiet; then
+            printf '{"status":"no_change"}\n' > .yukon/baseline-promotion.json
+            exit 0
+          fi
+          git -C "$next_checkout" -c user.name='spec.prove host' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m "Advance verified v4 baseline"
+          gh auth setup-git
+          git -C "$next_checkout" push origin HEAD:refs/heads/codex/specprove-v4-internal
+          printf '{"status":"updated"}\n' > .yukon/baseline-promotion.json
       - name: Read score
         id: score
         if: success()
@@ -69,6 +111,7 @@ jobs:
           path: |
             runs/reproduced-v4-hosted-*/
             runs/reproduced-proof-reproduced-v4-hosted-*/
+            .yukon/baseline-promotion.json
             !runs/reproduced-v4-hosted-*/*.olean
           include-hidden-files: true
           if-no-files-found: ignore

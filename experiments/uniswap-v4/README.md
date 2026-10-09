@@ -2,8 +2,8 @@
 
 ## Local falsification and repair loop
 
-The separate local loop starts with `specs/base.json`, creator intent, and the
-seeded hook source. A transaction challenger supplies a bounded trace; the
+The separate local loop starts with the active `specs/base.json`, creator intent,
+and the contract selected by `baseline.json`. A transaction challenger supplies a bounded trace; the
 runner executes each call in a local Foundry EVM against the pinned PoolManager
 and records per-step call outcomes, hook accounting, caller, timestamp, token
 custody, and recipient balance. It compares those observations with the versioned
@@ -59,8 +59,9 @@ mechanism tests, not evidence of independent agent reliability. The optional
 Codex path is the independent LLM test. The supported repair catalog is bounded
 to cumulative claim limits and removal of the draft minimum rebate; arbitrary source patches or new
 economic assumptions require a new reviewed version. A contract verdict emits a
-Solidity diff and revised source; a spec verdict emits a revised JSON spec. Both
-remain proposals with `accepted: false` and `creator_approval: pending`.
+Solidity diff and revised source; a spec verdict emits a revised JSON spec. Successful closed repairs advance the operational benchmark baseline. They
+do not grant creator semantic approval: `accepted: false` and
+`creator_approval: pending` remain.
 
 The Yukon-hosted benchmark accepts a bounded trace as participant input, then
 runs the full execution, independent judgment, proposed repair, replay, and
@@ -72,7 +73,7 @@ This branch supplies the isolated `antojoseph/spec-prove-v4-internal` developmen
 
 ## What is frozen
 
-`src/RebateHook.sol` implements a deliberately flawed custom hook and a repaired control. The target is the seeded variant (`repaired=false`), while the base spec has an independent draft rounding mistake. Both run with the pinned official Uniswap v4 PoolManager, Solidity 0.8.26, Foundry 1.7.1, and Lean 4.22.0. The contract defect belongs to our custom hook, not Uniswap. The host materializes a bounded contract patch or spec revision after the model's verdict; participants do not patch contracts.
+`src/RebateHook.sol` implements a deliberately flawed custom hook and a repaired control. The initial target is the seeded variant (`repaired=false`), while the initial base spec has an independent draft rounding mistake. Both run with the pinned official Uniswap v4 PoolManager, Solidity 0.8.26, Foundry 1.7.1, and Lean 4.22.0. The contract defect belongs to our custom hook, not Uniswap. The host materializes a bounded contract patch or spec revision after the model's verdict; participants do not patch contracts.
 
 On each exact-input swap the hook collects 1% of gross output, rounded down, and credits half that fee, rounded down, as rebate. R1 includes that rounding rule. R2 requires cumulative claims to stay within earned rebates. R3 requires each pool's payments to stay within its own collected fees. R4 and R5 are regression-tested; this trace interface can demonstrate R1 spec or R2/R3 contract defects.
 
@@ -89,8 +90,7 @@ yukon sync --harness-only
 yukon setup
 ```
 
-Yukon initially clones the currently promoted source commit, which may predate
-this hosted runner. `sync --harness-only` fetches the configured branch's current
+Yukon may clone a promoted source commit that predates the latest baseline. `sync --harness-only` fetches the configured branch's current
 verifier while preserving `submission/trace.json`. Run it before setup and local
 preflight. It does not run model judgment or change the promoted trace.
 
@@ -117,15 +117,46 @@ yukon submissions
 
 The note must be 5–100 KiB of useful Markdown describing the tested trace, reproduction, results and limitations. Use exact model and harness attribution. Do not put credentials or private data in notes. Notes are visible to other solvers. The host pays for the judge and repair model calls. No participant model account, wallet, RPC endpoint, external-chain contract deployment or financial transaction is required.
 
-## Score and validation
+## Credit and shared baseline
 
-Every completed, verified repair earns **one demo impact credit per submission**, including a specification repair. The judge must cite transaction and requirement evidence; the host changes only the judged artifact, replays the same trace, checks regressions and Lean evidence, and obtains a clean second review. The `verified_impact_credit` metric records that contribution for the demo to sum across submissions. Repeated traces can earn credit under this internal rule; the credit does not claim a new distinct defect.
+The first supported falsification of a distinct defect earns one impact credit.
+The participant submits only a bounded transaction trace. The host executes it,
+checks the initial Lean evidence, and obtains an independent judgment citing
+transaction and intent requirements. Credit does **not** wait for the host's
+repair to succeed. Repeated evidence for the same defect earns no additional
+credit on the challenge leaderboard.
 
-For Yukon compatibility, scalar `score` remains a per-submission measurement: a contract repair earns one point per demonstrated R2/R3 requirement (maximum 2), while a verified spec repair earns 1. A non-falsifying trace scores 0. Yukon promotes only a score strictly better than the standing record, so it can reject a verified repair that still earns demo credit. The repeated-claim fixture scores 2 and the one-unit-fee spec fixture scores 1 after successful hosted judgments. Invalid input, failed execution or proof, and unsuccessful repair verification produce **no score file**. Neither scalar is a security rating.
+The host then proposes a repair from the closed catalog, replays the same trace,
+checks Lean and regressions, and obtains an independent second review. If those
+checks pass, GitHub Actions commits a new `baseline.json` revision to the
+benchmark branch. A contract repair writes `specs/active/RebateHook.sol` and
+selects it as the active contract. A spec repair updates `specs/base.json`.
+Future submissions load those active files. A submission built on a stale
+baseline must sync and resubmit. Failed or unresolved host repairs are recorded
+but do not change the baseline; host maintainers must resolve them. The
+promotion artifact records whether advancement succeeded.
 
-The trusted adapter clears stale scores first, validates the input surface, runs the concrete EVM and Lean checks, sends evidence to tool-free host-funded GPT-6.1 Sol judge and repair roles through OpenRouter, applies only a closed validated edit, and repeats the EVM and Lean checks. The GitHub Actions runner requires the repository secret `SPEC_PROVE_OPENROUTER_API_KEY`. Missing host configuration fails closed with no score. Only the benchmark step receives the secret, after the editable-path check. Never put credentials in `submission/trace.json` or a public note. A promoted Yukon submission records the trace and hosted score; it does not approve a specification or contract.
+The only closed repair choices are cumulative claim enforcement and removal of
+the draft one-unit minimum rebate. A new defect class, policy choice, contract
+family, or environment assumption needs an explicitly reviewed challenge
+version. Once both known defects have been repaired, these fixtures should no
+longer falsify the active target; continued hillclimbing needs a new version.
+Creator semantic approval remains pending and `accepted` remains false after
+operational baseline advancement.
 
-Impact credit is evidence of a completed bounded repair workflow, not contract acceptance. `accepted: false`, `creator_approval: pending`, and `contract_correspondence: not_proved` remain separate from Yukon's submission promotion status.
+For Yukon compatibility, scalar `score` is 1 for a supported first-round
+falsification and 0 otherwise. Yukon promotes only a strictly higher score, so
+it can reject a tied record even when the challenge leaderboard credits a
+new distinct defect. The leaderboard deduplicates by defect key across all
+hosted submissions. The binary scalar is not a coverage or security rating.
+Invalid input and failed initial execution or proof produce no score file.
+
+The host-owned adapter clears stale scores, validates the input surface, runs
+concrete EVM and Lean checks, and sends evidence to tool-free host-funded
+GPT-6.1 Sol judge and repair roles through OpenRouter. The GitHub Actions runner
+requires `SPEC_PROVE_OPENROUTER_API_KEY`. Missing host configuration fails
+closed. Only the benchmark step receives that secret after the editable-path
+check. Never put credentials in a trace or public note.
 
 ## Evidence and limits
 

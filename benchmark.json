@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "name": "spec-prove-v4-internal",
-  "description": "Internal Uniswap v4 falsification-and-repair workflow: submit a bounded JSON transaction trace. The trusted host executes it against pinned v4 PoolManager, checks Lean evidence, obtains independent host-funded LLM judgment, materializes a bounded spec or contract repair proposal, replays it, and runs a second review. Each verified spec or contract repair earns one demo impact credit; Yukon retains a legacy per-submission scalar score for compatibility. No participant code, external-chain deployment, or creator approval.",
+  "description": "Internal Uniswap v4 falsification-and-repair workflow: submit a bounded JSON transaction trace. The trusted host executes it against pinned v4 PoolManager, checks Lean evidence, obtains independent host-funded LLM judgment, materializes a bounded spec or contract repair proposal, replays it, and runs a second review. The first supported falsification of each distinct defect earns one impact credit; successful host repairs advance the shared versioned baseline. Yukon uses a binary compatibility score. No participant code, external-chain deployment, or creator approval.",
   "category": "Internal / smart-contract specifications",
   "direction": "+",
   "editablePaths": ["submission/trace.json"],

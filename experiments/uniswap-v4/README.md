@@ -74,8 +74,14 @@ export YUKON_API_URL=https://api-dev.yukon.org
 yukon login YOUR_DEV_API_KEY --api https://api-dev.yukon.org
 yukon clone antojoseph/spec-prove-v4-internal
 # Enter the directory printed by clone.
+yukon sync --harness-only
 yukon setup
 ```
+
+Yukon initially clones the currently promoted source commit, which may predate
+this hosted runner. `sync --harness-only` fetches the configured branch's current
+verifier while preserving `submission/trace.json`. Run it before setup and local
+preflight. It does not run model judgment or change the promoted trace.
 
 The hosted submission runs the model-backed benchmark in GitHub Actions. A
 participant without the host's model credentials can preflight a trace locally

@@ -2,7 +2,6 @@
 import copy
 import hashlib
 import json
-import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -47,12 +46,7 @@ def instrumented_source(submission, fixed):
 
 
 def runtime_env():
-    env = dict(os.environ)
-    config = run.ROOT / '.tools/v4/runtime.json'
-    if config.exists():
-        for key, value in json.loads(config.read_text()).items():
-            env.setdefault('V4_' + key.upper(), value)
-    return env
+    return run.runtime_env()
 
 
 def execute(submission, fixed, source, out, patched=False):

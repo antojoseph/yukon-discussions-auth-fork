@@ -58,6 +58,18 @@ def command(args, cwd=BASE, env=None, timeout=300):
     return r.returncode, r.stdout
 
 
+def runtime_env():
+    """Use setup's pinned tools unless the caller supplied explicit paths."""
+    env = dict(os.environ)
+    config = ROOT / '.tools/v4/runtime.json'
+    if config.exists():
+        runtimes = json.loads(config.read_text())
+        for tool in ('forge', 'lean', 'solc'):
+            if tool in runtimes:
+                env.setdefault('V4_' + tool.upper(), runtimes[tool])
+    return env
+
+
 def verify_dependencies():
     lock = json.loads((BASE / "dependencies.json").read_text())
     dep = BASE / "lib/v4-core"
@@ -227,19 +239,20 @@ def main():
     state = {"validation_completed": False, "accepted": False, "creator_approval": "pending",
              "contract_correspondence": "not_proved", "deployment": "none", "dependencies": lock}
     try:
-        forge = os.environ.get("V4_FORGE", "forge")
-        lean = os.environ.get("V4_LEAN", "lean")
-        code, version = command([lean, "--version"])
+        env = runtime_env()
+        forge = env.get("V4_FORGE", "forge")
+        lean = env.get("V4_LEAN", "lean")
+        code, version = command([lean, "--version"], env=env)
         if code or not re.search(r"version 4\.22\.0(?:\s|,|\))", version):
             raise ValueError("Lean 4.22.0 required; set V4_LEAN")
         state["lean_version"] = version.strip()
-        code, version = command([forge, "--version"])
+        code, version = command([forge, "--version"], env=env)
         if code: raise ValueError("Forge required; set V4_FORGE")
         state["forge_version"] = version.strip()
         forge_args = [forge, "test", "--root", BASE, "--json", "-vv"]
-        if os.environ.get("V4_SOLC"):
-            forge_args += ["--use", str(Path(os.environ["V4_SOLC"]).resolve()), "--offline"]
-        code, raw = command(forge_args + ["--match-contract", "^RebateHookTest$"])
+        if env.get("V4_SOLC"):
+            forge_args += ["--use", str(Path(env["V4_SOLC"]).resolve()), "--offline"]
+        code, raw = command(forge_args + ["--match-contract", "^RebateHookTest$"], env=env)
         (out / "forge-regression.json").write_text(raw)
         if code: raise ValueError("Solidity regression run failed; inspect forge-regression.json")
         tests = decode_forge(raw)
@@ -251,7 +264,7 @@ def main():
             generated = Path(f.name)
         try:
             code, raw = command(forge_args + ["--match-path", "test/" + generated.name,
-                "--match-test", "^testSubmitted(Seeded|Repaired)\\(\\)$"])
+                "--match-test", "^testSubmitted(Seeded|Repaired)\\(\\)$"], env=env)
         finally:
             generated.unlink()
         (out / "forge-submission.json").write_text(raw)
@@ -266,13 +279,13 @@ def main():
             abstractions.append(abstract)
         if abstractions[0] != abstractions[1]: raise ValueError("repair changed observed fee collection")
         if state["repaired"]["violations"]: raise ValueError("repair violated the invariant")
-        code, raw = command([lean, "-o", out / "Rebate.olean", BASE / "lean/Rebate.lean"])
+        code, raw = command([lean, "-o", out / "Rebate.olean", BASE / "lean/Rebate.lean"], env=env)
         (out / "lean-model.log").write_text(raw)
         if code: raise ValueError("Lean model check failed")
         check_axioms(raw, THEOREMS)
         (out / "Submitted.lean").write_text(witness_source(abstractions[0], state["seeded"], state["repaired"]))
-        env = {**os.environ, "LEAN_PATH": str(out)}
-        code, raw = command([lean, out / "Submitted.lean"], env=env)
+        lean_env = {**env, "LEAN_PATH": str(out)}
+        code, raw = command([lean, out / "Submitted.lean"], env=lean_env)
         (out / "lean-submission.log").write_text(raw)
         if code: raise ValueError("Lean submission witness failed")
         check_axioms(raw, {"Rebate.submitted_replay"})

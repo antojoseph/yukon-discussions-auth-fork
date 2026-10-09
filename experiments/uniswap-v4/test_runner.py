@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 import run
 
 
@@ -62,6 +63,18 @@ class SubmissionTests(unittest.TestCase):
                 'B_collected: 0', 'B_earned: 0', 'B_paid: 0', 'custody: 50']
         result, _ = run.replay_model(actions, logs, fixed=False)
         self.assertEqual(result['violations'], [])
+
+    def test_setup_paths_are_used_by_local_preflight_with_explicit_override(self):
+        with tempfile.TemporaryDirectory() as d, patch.object(run, 'ROOT', Path(d)):
+            config = Path(d) / '.tools/v4/runtime.json'
+            config.parent.mkdir(parents=True)
+            config.write_text(json.dumps({'forge': '/pinned/forge', 'lean': '/pinned/lean',
+                                          'solc': '/pinned/solc'}))
+            with patch.dict('os.environ', {'V4_LEAN': '/custom/lean'}, clear=True):
+                env = run.runtime_env()
+            self.assertEqual(env['V4_FORGE'], '/pinned/forge')
+            self.assertEqual(env['V4_LEAN'], '/custom/lean')
+            self.assertEqual(env['V4_SOLC'], '/pinned/solc')
 
 
 if __name__ == '__main__':

@@ -146,7 +146,9 @@ def compare(spec, observed):
         a = tx['action']; p = a['pool']; amount = a['amount']; state = accounts[p]
         if a['op'] == 'swap':
             fee = tx['fee']
-            state['collected'] += fee; state['earned'] += fee // 2; custody += fee
+            state['collected'] += fee
+            state['earned'] += max(fee // 2, spec.get('minimum_rebate', 0)) if fee else 0
+            custody += fee
             allowed = True
         else:
             owed = state['earned'] - state['paid'] if spec['claim_limit'] == 'cumulative' else state['earned']

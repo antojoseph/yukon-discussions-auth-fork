@@ -1,0 +1,28 @@
+[
+  {
+    "judge": {
+      "schema_version": 1,
+      "verdict": "spec_defect",
+      "evidence_ids": ["tx-1"],
+      "requirement_ids": ["R1"],
+      "reasoning": "The EVM collects a one-unit fee and credits zero rebate, matching the creator's floor(fee/2) rule. The draft specification predicts one unit because it imposes a minimum rebate. The specification is wrong.",
+      "questions": []
+    },
+    "repair": {
+      "schema_version": 1,
+      "target": "spec",
+      "change": "remove_minimum_rebate",
+      "reasoning": "Remove the draft minimum so the specification credits floor(fee/2) on every swap."
+    }
+  },
+  {
+    "judge": {
+      "schema_version": 1,
+      "verdict": "unsupported",
+      "evidence_ids": [],
+      "requirement_ids": [],
+      "reasoning": "The repaired specification and observed transaction agree; creator approval remains pending.",
+      "questions": []
+    }
+  }
+]

@@ -27,8 +27,16 @@ class RepairRoutingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'target'):
             loop.validate_repair(p, self.judge, self.spec, 'seeded')
         j = {**self.judge, 'verdict': 'spec_defect'}
-        with self.assertRaisesRegex(ValueError, 'no-op'):
+        with self.assertRaisesRegex(ValueError, 'Unsupported repair'):
             loop.validate_repair(p, j, self.spec, 'repaired')
+
+    def test_minimum_rebate_spec_repair_is_bounded(self):
+        judgment = {**self.judge, 'verdict': 'spec_defect', 'requirement_ids': ['R1']}
+        proposal = {'schema_version': 1, 'target': 'spec', 'change': 'remove_minimum_rebate',
+                    'reasoning': 'A one-unit fee earns zero rebate under the creator intent.'}
+        self.assertEqual(loop.validate_repair(proposal, judgment, self.spec, 'seeded'), proposal)
+        with self.assertRaisesRegex(ValueError, 'Unsupported repair'):
+            loop.validate_repair(proposal, judgment, {**self.spec, 'minimum_rebate': 0}, 'seeded')
 
     def test_contract_patch_removes_seeded_per_call_guard(self):
         proposed = patch_contract(self.source)
@@ -49,6 +57,17 @@ class RepairRoutingTests(unittest.TestCase):
         self.assertEqual(differences[0]['id'], 'tx-3')
         self.assertEqual(differences[0]['intent_violations'], [])
         self.assertIn('call_outcome', differences[0]['spec_mismatches'])
+
+    def test_one_unit_fee_falsifies_minimum_rebate_draft(self):
+        observed = {'transactions': [{'id': 'tx-1', 'action': {'op': 'swap', 'pool': 'A', 'amount': 200},
+                    'succeeded': True, 'fee': 1,
+                    'after': {'A_collected': 1, 'A_earned': 0, 'A_paid': 0,
+                              'B_collected': 0, 'B_earned': 0, 'B_paid': 0, 'custody': 1}}]}
+        findings = compare(self.spec, observed)['findings']
+        self.assertEqual(findings[0]['id'], 'tx-1')
+        self.assertEqual(findings[0]['intent_violations'], [])
+        self.assertIn('A_earned', findings[0]['spec_mismatches'])
+        self.assertEqual(compare({**self.spec, 'minimum_rebate': 0}, observed)['findings'], [])
 
 
 if __name__ == '__main__':

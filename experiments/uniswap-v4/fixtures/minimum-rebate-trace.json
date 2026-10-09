@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "family": "uniswap-v4-rebate-v1",
+  "requirement": "R1",
+  "description": "A small swap collects a one-unit fee. Creator intent credits floor(1/2) = 0 rebate, but the draft base specification predicts a minimum rebate of 1. The transaction tests the specification without changing the contract.",
+  "actions": [
+    {"op": "swap", "pool": "A", "amount": 200}
+  ]
+}

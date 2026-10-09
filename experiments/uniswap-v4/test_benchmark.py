@@ -34,6 +34,18 @@ class HostedTests(unittest.TestCase):
         self.assertEqual(benchmark.supported_score(report, 'R3'), 2)
         self.assertEqual(benchmark.supported_score(report, 'R1'), 0)
 
+    def test_verified_spec_repair_earns_impact_credit(self):
+        report = copy.deepcopy(self.report())
+        first = report['rounds'][0]
+        first['comparison']['findings'] = [{'id': 'tx-1', 'intent_violations': [],
+                                            'spec_mismatches': ['A_earned']}]
+        first['judgment'] = {'verdict': 'spec_defect', 'requirement_ids': ['R1']}
+        first['repair'] = {'target': 'spec', 'change': 'remove_minimum_rebate'}
+        self.assertEqual(benchmark.supported_score(report, 'R1'), 1)
+        self.assertEqual(benchmark.supported_score(report, 'R2'), 0)
+        first['comparison']['findings'][0]['intent_violations'] = ['R2']
+        self.assertEqual(benchmark.supported_score(report, 'R1'), 0)
+
     def test_missing_judgment_repair_replay_or_proof_fails_closed(self):
         for path, value in [
             (('accepted',), True), (('creator_approval',), 'approved'),

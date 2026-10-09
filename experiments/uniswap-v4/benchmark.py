@@ -40,13 +40,21 @@ def supported_score(report, submitted_requirement):
     violations = {v for f in first['comparison']['findings'] for v in f['intent_violations']}
     if not violations <= {'R2', 'R3'}:
         raise ValueError('Unknown scored requirement')
-    if not violations:
-        return 0
-    if submitted_requirement not in violations:
-        return 0
-    if first.get('judgment', {}).get('verdict') != 'contract_defect':
-        return 0
-    if first.get('repair', {}).get('target') != 'contract':
+    judgment = first.get('judgment', {})
+    target = first.get('repair', {}).get('target')
+    contract_repair = judgment.get('verdict') == 'contract_defect' and target == 'contract'
+    spec_repair = judgment.get('verdict') == 'spec_defect' and target == 'spec'
+    if contract_repair:
+        if submitted_requirement not in violations:
+            return 0
+        score = len(violations)
+    elif spec_repair:
+        if violations or submitted_requirement not in judgment.get('requirement_ids', []):
+            return 0
+        if not any(f['spec_mismatches'] for f in first['comparison']['findings']):
+            return 0
+        score = 1
+    else:
         return 0
     recheck = first.get('repair_recheck', {})
     if recheck.get('comparison', {}).get('findings') or recheck.get('kernel_checked') is not True:
@@ -58,7 +66,7 @@ def supported_score(report, submitted_requirement):
         raise ValueError('Post-repair review did not close the demonstrated mismatch')
     if report['status'] != 'no_demonstrated_mismatch':
         raise ValueError('Hosted workflow did not finish')
-    return len(violations)
+    return score
 
 
 def main():
@@ -73,7 +81,11 @@ def main():
     if report.get('judge_mode') != 'hosted_openrouter_tool_free_roles' or report.get('model') != model:
         raise ValueError('Missing hosted inference provenance')
     score = supported_score(report, submission['requirement'])
-    result = {'score': score, 'metrics': {'requirements_demonstrated': score, 'maximum': 2,
+    target = report['rounds'][0].get('repair', {}).get('target') if score else None
+    demonstrated = len({v for finding in report['rounds'][0]['comparison']['findings']
+                        for v in finding['intent_violations']}) if score else 0
+    result = {'score': score, 'metrics': {'requirements_demonstrated': demonstrated, 'maximum': 2,
+              'verified_impact_credit': 1 if score else 0, 'repair_target': target,
               'kernel_checked': True, 'accepted': False, 'creator_approval': 'pending',
               'contract_correspondence': 'not_proved', 'judge_mode': report['judge_mode'],
               'model': model, 'workflow_status': report['status'], 'evidence': str(out.relative_to(ROOT))}}

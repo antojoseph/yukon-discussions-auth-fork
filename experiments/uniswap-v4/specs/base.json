@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "family": "uniswap-v4-rebate-v1",
+  "claim_limit": "cumulative"
+}

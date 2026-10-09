@@ -1,0 +1,33 @@
+[
+  {
+    "judge": {
+      "schema_version": 1,
+      "verdict": "spec_defect",
+      "evidence_ids": [
+        "tx-4",
+        "tx-5"
+      ],
+      "requirement_ids": [
+        "R2"
+      ],
+      "reasoning": "The per-call draft predicts claims two and three will pay, but the EVM rejects both. Creator intent requires cumulative limits, which the contract enforces.",
+      "questions": []
+    },
+    "repair": {
+      "schema_version": 1,
+      "target": "spec",
+      "change": "cumulative",
+      "reasoning": "Revise the draft spec to subtract prior claims."
+    }
+  },
+  {
+    "judge": {
+      "schema_version": 1,
+      "verdict": "unsupported",
+      "evidence_ids": [],
+      "requirement_ids": [],
+      "reasoning": "No mismatch is demonstrated by the same trace after repair. This finite check does not grant creator approval.",
+      "questions": []
+    }
+  }
+]

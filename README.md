@@ -2,6 +2,8 @@
 
 This test branch adds the isolated [Uniswap v4 submission workflow](experiments/uniswap-v4/README.md). Its root `benchmark.json` is for the v4 development benchmark only; the escrow benchmark remains on `general-intent-pipeline`.
 
+The v4 directory also contains a [falsification and repair loop](experiments/uniswap-v4/README.md#local-falsification-and-repair-loop): it starts with a base specification and contract, executes a counterexample in a local EVM, routes a proposed fix to the specification or contract after semantic judgment, and replays the repair. The hosted Yukon submission format accepts a bounded transaction trace as input and runs the full loop using a host-owned model account.
+
 A reproducible escrow autoformalization experiment: one agent proposes a smart-contract specification, another challenges its interpretation of the creator's intent, and replay plus Lean check the evidence before a repair.
 
 **Start with [the experiment report](REPORT.md).** Give [AGENTS.md](AGENTS.md) to your coding agent to set up and test the repository. Source code, recorded agent responses, interactive reports and proof-checking evidence are included.

@@ -61,11 +61,12 @@ def demo(args):
     return summary
 
 
-def invoke_agent(role, data, output, timeout, model=None):
+def invoke_agent(role, data, output, timeout, model=None, instruction_root=None, schema_name=None):
     executable=shutil.which("codex")
     if not executable: raise RuntimeError("Codex CLI unavailable. Recorded demo needs no model access.")
-    instructions=(ROOT/"prompts"/f"{role}.txt").read_text()
-    schema=ROOT/"schemas"/("candidate.json" if role=="proposer" else "review.json")
+    instruction_root=Path(instruction_root) if instruction_root else ROOT
+    instructions=(instruction_root/"prompts"/f"{role}.txt").read_text()
+    schema=instruction_root/"schemas"/(schema_name or ("candidate.json" if role=="proposer" else "review.json"))
     # Ephemeral contexts share neither conversation nor output artifacts. The
     # minimal working directory contains only this role's prompt inputs. Codex's
     # read-only sandbox still permits reads elsewhere: this is prompt isolation,

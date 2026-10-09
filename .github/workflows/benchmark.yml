@@ -9,7 +9,7 @@ concurrency:
 jobs:
   benchmark:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 60
     outputs:
       score: ${{ steps.score.outputs.value }}
     steps:
@@ -44,7 +44,9 @@ jobs:
           done < <(git diff --no-renames --name-only -z "$GITHUB_SHA^" "$GITHUB_SHA")
       - name: Setup pinned runtimes and the isolated verifier
         run: bash .yukon/setup.sh
-      - name: Benchmark (fail-closed replay and kernel checks)
+      - name: Benchmark (EVM evidence, independent judgment, proposed repair, replay and Lean)
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.SPEC_PROVE_OPENROUTER_API_KEY }}
         run: python3 experiments/uniswap-v4/benchmark.py
       - name: Read score
         id: score
@@ -66,6 +68,7 @@ jobs:
           name: benchmark-evidence
           path: |
             runs/reproduced-v4-hosted-*/
+            runs/reproduced-proof-reproduced-v4-hosted-*/
             !runs/reproduced-v4-hosted-*/*.olean
           include-hidden-files: true
           if-no-files-found: ignore

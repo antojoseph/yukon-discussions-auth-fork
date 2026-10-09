@@ -1,5 +1,31 @@
 # auto-prove: escrow specification experiment
 
+## Later v4 falsification and repair extension
+
+The [Uniswap v4 local experiment](experiments/uniswap-v4/README.md#local-falsification-and-repair-loop)
+adds the two repair targets discussed after this escrow report. A versioned base
+claim rule and exact hook source accompany every round. A challenger submits
+bounded swap/claim actions, Foundry executes them against the pinned PoolManager,
+and the runner records per-step accounting and token balances. An independent
+Codex role is available to judge whether the evidence indicates a contract
+defect, specification defect, both, ambiguity, or an unsupported objection.
+The trusted repair catalog can then propose a Solidity guard patch or a new
+cumulative-claim specification version. The same transactions are replayed,
+followed by regression and Lean checks; parent versions and evidence remain in
+the generated report.
+
+Two saved-response mechanism runs are reproducible without model access:
+the seeded contract pays 147 after earning 49 in pool A and collecting 99 there,
+so the contract repair path proposes cumulative guards; a deliberately wrong
+per-call draft spec predicts repeated payment while the repaired hook rejects it,
+so the spec repair path proposes a revised rule. Both repaired pairs show no
+mismatch on that finite trace. The saved judge decisions are hand-written test
+fixtures. A fresh LLM judge run was **not completed** on this machine because
+the isolated Codex CLI failed at startup. This is not evidence of independent
+agent accuracy. Creator approval stays pending, `accepted` stays false, and no
+general EVM correspondence theorem is claimed. The original escrow findings
+below remain the recorded experiment and are unchanged.
+
 Experiment date: 2 October 2026. This repository contains the code, synthetic creator intent, agent outputs, replay evidence and Lean source needed to reproduce the experiment.
 
 ## Question and scope

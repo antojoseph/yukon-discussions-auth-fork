@@ -2,22 +2,12 @@
   "schema_version": 1,
   "family": "uniswap-v4-rebate-v1",
   "requirement": "R2",
-  "description": "Two claims of 49 after a single pool-A swap demonstrate cumulative payout 98 above earned rebate 49. Pool-A collected fees remain sufficient; this trace isolates R2.",
+  "description": "Seeded demonstration: repeated claims on A consume B's fee backing.",
   "actions": [
-    {
-      "op": "swap",
-      "pool": "A",
-      "amount": 10000
-    },
-    {
-      "op": "claim",
-      "pool": "A",
-      "amount": 49
-    },
-    {
-      "op": "claim",
-      "pool": "A",
-      "amount": 49
-    }
+    {"op": "swap", "pool": "A", "amount": 10000},
+    {"op": "swap", "pool": "B", "amount": 10000},
+    {"op": "claim", "pool": "A", "amount": 49},
+    {"op": "claim", "pool": "A", "amount": 49},
+    {"op": "claim", "pool": "A", "amount": 49}
   ]
 }

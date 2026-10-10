@@ -113,6 +113,20 @@ def agent(role, payload, out, args):
                         instruction_root=run.BASE, schema_name=role + '.json')
 
 
+def propose_extension(payload, judgment, folder, args):
+    extension = agent('repair_extension', {**payload, 'judgment': judgment,
+        'current_lean_model': (run.BASE / 'lean/Rebate.lean').read_text()},
+        folder / 'spec-extension-proposer', args)
+    if (not isinstance(extension, dict) or set(extension) !=
+            {'schema_version', 'specification', 'lean_source', 'contract_source', 'reasoning'} or
+            extension['schema_version'] != 1 or
+            any(not isinstance(extension[k], str) or not extension[k].strip() or
+                len(extension[k]) > 100000 for k in ('specification', 'lean_source', 'contract_source', 'reasoning'))):
+        raise ValueError('Invalid judge-authored extension proposal')
+    write(folder / 'spec-extension-proposal.json', extension)
+    return extension
+
+
 def proof(submission_path, out):
     # Existing verifier independently runs both variants, model agreement, Lean,
     # and the original regression suite. It never receives an LLM proof/source.
@@ -273,28 +287,32 @@ def main():
                 r['spec_extension_request'] = request
                 write(folder / 'spec-extension-request.json', request)
                 if not responses:
-                    extension = agent('repair_extension', {**payload, 'judgment': judgment,
-                        'current_lean_model': (run.BASE / 'lean/Rebate.lean').read_text()},
-                        folder / 'spec-extension-proposer', args)
-                    if (not isinstance(extension, dict) or set(extension) !=
-                            {'schema_version', 'specification', 'lean_source', 'contract_source', 'reasoning'} or
-                            extension['schema_version'] != 1 or
-                            any(not isinstance(extension[k], str) or not extension[k].strip() or
-                                len(extension[k]) > 100000 for k in ('specification', 'lean_source', 'contract_source', 'reasoning'))):
-                        raise ValueError('Invalid judge-authored extension proposal')
-                    r['spec_extension_proposal'] = extension
-                    write(folder / 'spec-extension-proposal.json', extension)
+                    r['spec_extension_proposal'] = propose_extension(payload, judgment, folder, args)
                     r['status'] = state['status'] = 'spec_extension_proposed_pending_verification'
                 else:
                     r['status'] = state['status'] = 'spec_extension_required'
                 break
-            if judgment['verdict'] in ('both', 'ambiguous'):
+            if judgment['verdict'] == 'both':
+                if not responses:
+                    r['spec_extension_proposal'] = propose_extension(payload, judgment, folder, args)
+                    r['status'] = state['status'] = 'repair_proposed_pending_verification'
+                else:
+                    r['status'] = state['status'] = 'repair_requires_review'
+                break
+            if judgment['verdict'] == 'ambiguous':
                 r['status'] = state['status'] = 'needs_creator_review'; break
             if judgment['verdict'] == 'unsupported':
                 r['status'] = state['status'] = 'no_demonstrated_mismatch' if not r['comparison']['findings'] else 'judge_disagrees_with_finding'
                 break
             if number == args.rounds:
                 r['status'] = state['status'] = 'round_limit_with_unresolved_defect'; break
+            if judgment.get('defect_key') and judgment['defect_key'] not in ('contract:cumulative_claims', 'spec:minimum_rebate'):
+                if not responses:
+                    r['spec_extension_proposal'] = propose_extension(payload, judgment, folder, args)
+                    r['status'] = state['status'] = 'repair_proposed_pending_verification'
+                else:
+                    r['status'] = state['status'] = 'repair_requires_review'
+                break
             proposal = responses[i]['repair'] if responses else agent('repair', {**payload, 'judgment': judgment}, folder / 'proposer', args)
             try:
                 r['repair'] = validate_repair(proposal, judgment, spec, contract)

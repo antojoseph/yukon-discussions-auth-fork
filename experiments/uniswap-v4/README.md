@@ -145,10 +145,10 @@ selects it as the active contract. A spec repair updates `specs/base.json`.
 Future submissions load those active files. A submission built on a stale
 baseline must sync and resubmit. Failed or unresolved host repairs are recorded
 but do not change the baseline; host maintainers must resolve them. A finding
-outside the closed repair catalog receives `repair_requires_review` and leaves
-the current baseline active. The promotion artifact records whether
-advancement succeeded. For a supported Lean specification gap, the judge sets
-`spec_gap: true`; the host calls a separate repair author to propose replacement
+outside the closed repair catalog causes the host to call a separate model
+repair author and leaves the current baseline active pending verification. The
+promotion artifact records whether advancement succeeded. For a supported Lean
+specification gap, the judge sets `spec_gap: true`; the host proposes replacement
 base spec, Lean model and contract source, saved in `spec-extension-proposal.json`.
 That proposal is data and remains pending verification. The current trusted
 compiler cannot check arbitrary new Lean semantics or raw calls, so this path

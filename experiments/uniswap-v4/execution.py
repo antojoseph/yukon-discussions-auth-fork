@@ -30,6 +30,8 @@ def instrumented_source(submission, fixed):
     source = source.replace('true));', 'true)); observe();')
     source = source.replace('ok ? 1 : 0); }', 'ok ? 1 : 0); emit log_named_bytes("return_data", data); observe(); }')
     source = source.replace('(bool ok,) = address(hook).call', '(bool ok, bytes memory data) = address(hook).call')
+    source = source.replace('emit log_named_bytes("raw_return_data", data); }',
+                            'emit log_named_bytes("raw_return_data", data); observe(); }')
     # End-of-replay summary belongs to the old interface; observe covers it per step.
     source = source[:source.index('emit log_named_uint("A_collected"')]
     observe = []
@@ -107,6 +109,10 @@ def execute(submission, fixed, source, out, patched=False):
     for i, action in enumerate(submission['actions']):
         if action['op'] == 'swap':
             fee, success, returned = int(take('fee_' + action['pool'])), True, None
+        elif action['op'] == 'call':
+            fee, success, returned = None, int(take('raw_ok')), take('raw_return_data')
+            if success not in (0, 1):
+                raise ValueError('Invalid EVM call result')
         else:
             fee, success, returned = None, int(take('claim_ok')), take('return_data')
             if success not in (0, 1):
@@ -119,7 +125,8 @@ def execute(submission, fixed, source, out, patched=False):
             anomalies.append('claim_accounting_differs_from_payout')
         if action['op'] == 'claim' and success and after['recipient_balance'] - previous['recipient_balance'] != action['amount']:
             anomalies.append('successful_claim_paid_unexpected_amount')
-        events.append(dict(id=f'tx-{i+1}', action=action, succeeded=bool(success), fee=fee,
+        events.append(dict(id=f'tx-{i+1}', action=action, call_as=action.get('caller', 'self'),
+                           succeeded=bool(success), fee=fee,
                            return_data=returned, before=previous, after=after, anomalies=anomalies))
         previous = after
     if list(iterator):
@@ -138,7 +145,24 @@ def compare(spec, observed):
     differences = []
     predictions = []
     for tx in observed['transactions']:
-        a = tx['action']; p = a['pool']; amount = a['amount']; state = accounts[p]
+        a = tx['action']
+        if a['op'] == 'call':
+            after = tx['after']
+            for pool in ('A', 'B'):
+                for field in ('collected', 'earned', 'paid'):
+                    accounts[pool][field] = after[pool + '_' + field]
+            custody = after['custody']
+            violations = []
+            if any(after[pool + '_paid'] > after[pool + '_earned'] for pool in ('A', 'B')):
+                violations.append('R2')
+            if any(after[pool + '_paid'] > after[pool + '_collected'] for pool in ('A', 'B')):
+                violations.append('R3')
+            predictions.append(dict(id=tx['id'], unmodeled=True))
+            if violations or tx.get('anomalies'):
+                differences.append(dict(id=tx['id'], spec_mismatches=[], intent_violations=violations,
+                                        execution_anomalies=tx.get('anomalies', [])))
+            continue
+        p = a['pool']; amount = a['amount']; state = accounts[p]
         if a['op'] == 'swap':
             fee = tx['fee']
             state['collected'] += fee

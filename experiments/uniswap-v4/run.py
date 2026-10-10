@@ -43,12 +43,22 @@ def read_submission(path):
     if not isinstance(x["actions"], list) or not 1 <= len(x["actions"]) <= 32:
         raise ValueError("provide 1..32 actions")
     for a in x["actions"]:
-        if not isinstance(a, dict) or set(a) != {"op", "pool", "amount"}:
-            raise ValueError("unexpected action fields")
-        if a["op"] not in ("swap", "claim") or a["pool"] not in ("A", "B"):
-            raise ValueError("unknown action or pool")
-        if type(a["amount"]) is not int or not 1 <= a["amount"] <= 10**12:
-            raise ValueError("amount must be an integer in 1..10^12")
+        if not isinstance(a, dict):
+            raise ValueError("action must be an object")
+        if a.get("op") == "call":
+            if (set(a) != {"op", "target", "caller", "calldata"} or
+                    a["target"] not in ("hook", "router", "manager", "currency0", "currency1") or
+                    a["caller"] not in ("self", "bob") or
+                    not isinstance(a["calldata"], str) or
+                    not re.fullmatch(r"0x(?:[0-9a-fA-F]{2}){0,2048}", a["calldata"])):
+                raise ValueError("invalid bounded local call")
+        else:
+            if set(a) != {"op", "pool", "amount"}:
+                raise ValueError("unexpected action fields")
+            if a["op"] not in ("swap", "claim") or a["pool"] not in ("A", "B"):
+                raise ValueError("unknown action or pool")
+            if type(a["amount"]) is not int or not 1 <= a["amount"] <= 10**12:
+                raise ValueError("amount must be an integer in 1..10^12")
     return x
 
 
@@ -93,6 +103,15 @@ def solidity_trace(x):
     # Only validated enums and bounded integers enter code; description is never compiled.
     actions = []
     for a in x["actions"]:
+        if a["op"] == "call":
+            target = {"hook": "address(hook)", "router": "address(demoRouter)",
+                      "manager": "address(manager)", "currency0": "Currency.unwrap(currency0)",
+                      "currency1": "Currency.unwrap(currency1)"}[a["target"]]
+            prank = "vm.prank(BOB); " if a["caller"] == "bob" else ""
+            actions.append('{' + prank + f'(bool ok, bytes memory data) = {target}.call(hex"{a["calldata"][2:]}"); ' +
+                           'emit log_named_uint("raw_ok", ok ? 1 : 0); '
+                           'emit log_named_bytes("raw_return_data", data); }')
+            continue
         pool, n = "pool" + a["pool"], a["amount"]
         if a["op"] == "swap":
             actions.append(f'emit log_named_uint("fee_{a["pool"]}", swapIn({pool}, {n}, true));')
@@ -110,6 +129,7 @@ import {RebateHookTest} from "./RebateHook.t.sol";
 import {RebateHook} from "../src/RebateHook.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {Currency} from "v4-core/src/types/Currency.sol";
 contract SubmissionReplay is RebateHookTest {
     using PoolIdLibrary for PoolKey;
     function testSubmittedSeeded() public { fixture(false); replay(); }
@@ -239,6 +259,25 @@ def main():
     state = {"validation_completed": False, "accepted": False, "creator_approval": "pending",
              "contract_correspondence": "not_proved", "deployment": "none", "dependencies": lock}
     try:
+        if any(action["op"] == "call" for action in submission["actions"]):
+            from execution import compare, execute
+            baseline = json.loads((BASE / "baseline.json").read_text())
+            source = (BASE / baseline["contract_source"]).read_text()
+            observed = execute(submission, baseline["contract"] != "seeded", source,
+                               out / "raw-execution", patched=baseline["contract"] == "patched")
+            comparison = compare(json.loads((BASE / "specs/base.json").read_text()), observed)
+            state.update(validation_completed=True, kernel_checked=False, evm_executed=True,
+                         judge_run=False, submitted_requirement=submission["requirement"],
+                         baseline_revision=baseline["revision"], comparison=comparison,
+                         objection_supported=None)
+            (out / "report.html").write_text(
+                '<!doctype html><meta charset="utf-8"><title>Raw call preflight</title>'
+                '<h1>Local raw call preflight</h1><p>EVM replay completed. Lean and LLM judgment were not run.</p>'
+                '<p>Inspect evidence.json and raw-execution/execution.json.</p>')
+            print(json.dumps({"validation_completed": True, "evm_executed": True,
+                              "kernel_checked": False, "judge_run": False}, indent=2))
+            print("Report:", out / "report.html")
+            return
         env = runtime_env()
         forge = env.get("V4_FORGE", "forge")
         lean = env.get("V4_LEAN", "lean")

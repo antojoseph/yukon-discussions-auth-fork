@@ -1,5 +1,7 @@
 import copy
 import json
+from pathlib import Path
+import tempfile
 import unittest
 import loop
 from execution import compare, patch_contract
@@ -44,6 +46,22 @@ class RepairRoutingTests(unittest.TestCase):
         self.assertNotIn('if (amount > entitlement) revert InvalidClaim();', proposed)
         self.assertIn('if (amount > entitlement - claimed[pool][currency][msg.sender])', proposed)
         self.assertIn('if (amount > collected[pool][currency] - paid[pool][currency])', proposed)
+
+    def test_bounded_raw_call_is_data_and_rejects_source_injection(self):
+        trace = {'schema_version': 1, 'family': 'uniswap-v4-rebate-v1', 'requirement': 'R4',
+                 'description': 'Probe direct hook access',
+                 'actions': [{'op': 'call', 'target': 'hook', 'caller': 'bob', 'calldata': '0x1234'}]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'trace.json'
+            path.write_text(json.dumps(trace))
+            parsed = loop.run.read_submission(path)
+            source = loop.run.solidity_trace(parsed)
+            self.assertIn('vm.prank(BOB)', source)
+            self.assertIn('address(hook).call(hex"1234")', source)
+            trace['actions'][0]['calldata'] = '0x1234"); selfdestruct(payable(BOB)); //'
+            path.write_text(json.dumps(trace))
+            with self.assertRaisesRegex(ValueError, 'invalid bounded local call'):
+                loop.run.read_submission(path)
 
     def test_comparison_detects_spec_defect_with_no_intent_violation(self):
         observed = {'transactions': [

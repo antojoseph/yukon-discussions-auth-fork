@@ -76,7 +76,7 @@ This branch supplies the isolated `antojoseph/spec-prove-v4-internal` developmen
 
 `src/RebateHook.sol` implements a deliberately flawed custom hook and a repaired control. The initial target is the seeded variant (`repaired=false`), while the initial base spec has an independent draft rounding mistake. Both run with the pinned official Uniswap v4 PoolManager, Solidity 0.8.26, Foundry 1.7.1, and Lean 4.22.0. The contract defect belongs to our custom hook, not Uniswap. The host materializes a bounded contract patch or spec revision after the model's verdict; participants do not patch contracts.
 
-On each exact-input swap the hook collects 1% of gross output, rounded down, and credits half that fee, rounded down, as rebate. R1 includes that rounding rule. R2 requires cumulative claims to stay within earned rebates. R3 requires each pool's payments to stay within its own collected fees. R4 and R5 are regression-tested. The judge may cite any executed call and R1–R5, but the trace interface still permits only swaps and claims by its fixed caller against two local pools. Bugs needing other callers, tokens, pools or call types cannot be demonstrated through this interface yet.
+On each exact-input swap the hook collects 1% of gross output, rounded down, and credits half that fee, rounded down, as rebate. R1 includes that rounding rule. R2 requires cumulative claims to stay within earned rebates. R3 requires each pool's payments to stay within its own collected fees. R4 and R5 are regression-tested. The judge may cite any executed call and R1–R5. The trace interface supports structured swaps and claims plus bounded raw calldata calls to the local hook, router, manager or fixture tokens from the test actor or Bob. Other addresses, tokens, pools and external-chain state are outside this local challenge.
 
 ## Participate
 
@@ -103,10 +103,13 @@ configuration and is intended for benchmark maintainers.
 For a specification challenge, `run.py` can report `objection_supported: false`
 because it checks contract violations, not the draft spec. Its EVM and Lean
 evidence still feed the hosted spec comparison and independent judge.
+For a trace containing `call`, `run.py` performs EVM-only preflight and marks
+Lean and LLM judgment not run. The hosted benchmark still performs its own
+independent semantic judgment.
 
 Setup supports Linux x86_64 and macOS arm64. It downloads checksum-pinned runtimes and commit-pinned v4 dependencies. Python 3.9+, Git, curl and tar are required; Linux tar needs zstd for the Lean archive. For explicit installed runtimes, set `V4_FORGE`, `V4_LEAN`, and `V4_SOLC` during setup; their paths are persisted locally for the separate run command.
 
-Edit only `submission/trace.json`. The schema is `experiments/uniswap-v4/submission.schema.json`: one to 32 `swap` or `claim` actions on pool A or B, integer amounts from 1 to 10^12, and a cited requirement R1–R5. Prose is data and is never compiled. No arbitrary participant source code or Lean proof is accepted.
+Edit only `submission/trace.json`. The schema is `experiments/uniswap-v4/submission.schema.json`: one to 32 actions and a cited requirement R1–R5. A `swap` or `claim` action uses pool A or B and an integer amount from 1 to 10^12. A `call` action uses a named local target, caller `self` or `bob`, and up to 2,048 bytes of hex calldata. For example, `{"op":"call","target":"hook","caller":"bob","calldata":"0x"}` makes a direct local EVM call. Raw calls execute in Foundry but are outside the current Lean trace model; their score reports `kernel_checked: false`. Prose is data and is never compiled. No arbitrary participant source code or Lean proof is accepted.
 
 ```sh
 # Example attack; inspect it before copying.
@@ -148,7 +151,7 @@ fixtures should stop falsifying the active target. That result does not show
 that the contract or spec is free of other defects. Other defects observable
 through this transaction interface can be judged and credited. Their repairs
 require reviewed execution, regression and formal evidence before the shared
-baseline can advance. Defects needing transactions outside this interface
+baseline can advance. Defects needing transactions outside this local interface
 require a versioned trace and executor extension. Do not treat the absence of
 another credited finding as a security or specification-completeness claim.
 Creator semantic approval remains pending and `accepted` remains false after

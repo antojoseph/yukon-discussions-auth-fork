@@ -127,9 +127,12 @@ def render(state):
         evidence = r.get('execution', {})
         transactions = evidence.get('transactions', [])
         predictions = r.get('comparison', {}).get('predictions', [])
-        rows = ''.join('<tr><td>' + esc(tx['id']) + '</td><td>' + esc(tx['action']['op']) + ' ' + esc(tx['action']['pool']) +
-            ' · ' + str(tx['action']['amount']) + '</td><td>' + ('success' if tx['succeeded'] else 'revert') +
-            '</td><td>' + ('success' if p['succeeded'] else 'reject') + '</td><td>' + str(tx['after']['A_paid']) +
+        rows = ''.join('<tr><td>' + esc(tx['id']) + '</td><td>' +
+            (esc(tx['action']['op']) + ' ' + esc(tx['action']['pool']) + ' · ' + str(tx['action']['amount'])
+             if tx['action']['op'] != 'call' else 'call ' + esc(tx['action']['target']) + ' as ' + esc(tx['action']['caller'])) +
+            '</td><td>' + ('success' if tx['succeeded'] else 'revert') +
+            '</td><td>' + ('unmodeled' if p.get('unmodeled') else 'success' if p['succeeded'] else 'reject') +
+            '</td><td>' + str(tx['after']['A_paid']) +
             '</td><td>' + str(tx['after']['custody']) + '</td></tr>' for tx, p in zip(transactions, predictions))
         j = r.get('judgment', {})
         repair = r.get('repair', {})
@@ -208,20 +211,27 @@ def main():
                 submission = agent('challenger', payload, folder / 'challenger', args)
             write(folder / 'trace.json', submission)
             submission = run.read_submission(folder / 'trace.json')
-            print(f'Round {number}: execute concrete calls and independently check Lean', flush=True)
+            print(f'Round {number}: execute concrete calls' +
+                  ('' if any(action['op'] == 'call' for action in submission['actions']) else ' and independently check Lean'),
+                  flush=True)
             observed = execute(submission, contract != 'seeded', source, folder / 'execution', patched=contract == 'patched')
             r['execution'] = observed
             actual_model = compare({'claim_limit': 'per_call' if contract == 'seeded' else 'cumulative'}, observed)
             r['contract_model_comparison'] = actual_model
             proof_out = run.ROOT / 'runs' / ('reproduced-proof-' + out.name + f'-{number}')
-            try:
-                formal = proof(folder / 'trace.json', proof_out)
-                proof_error = None
-            except ValueError as error:
+            if any(action['op'] == 'call' for action in submission['actions']):
                 formal = {'kernel_checked': False}
-                proof_error = str(error)
+                proof_error = 'Raw local calls are outside the current Lean trace model'
+            else:
+                try:
+                    formal = proof(folder / 'trace.json', proof_out)
+                    proof_error = None
+                except ValueError as error:
+                    formal = {'kernel_checked': False}
+                    proof_error = str(error)
             r['verification'] = dict(kernel_checked=formal['kernel_checked'], evm_executed=True,
-                formal_error=proof_error, reference_checks=str(proof_out.relative_to(run.ROOT)),
+                formal_error=proof_error,
+                reference_checks=str(proof_out.relative_to(run.ROOT)) if proof_out.exists() else None,
                 contract_correspondence='not_proved', abstract_all_traces_invariant_proved=formal['kernel_checked'],
                 exact_proposal_regressions_passed=observed['regressions_passed'])
             r['comparison'] = compare(spec, observed)

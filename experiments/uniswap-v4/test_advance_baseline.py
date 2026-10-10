@@ -70,6 +70,18 @@ class BaselineAdvanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'second review'):
             advance_baseline.next_version(report, self.baseline, self.spec, self.source)
 
+    def test_raw_evm_evidence_can_advance_without_claiming_a_lean_trace_proof(self):
+        report = self.report('contract')
+        first, second = report['rounds']
+        first['execution'] = {'transactions': [{'action': {'op': 'call'}}]}
+        first['verification'] = {'kernel_checked': False, 'evm_executed': True}
+        first['repair_recheck'] = {'kernel_checked': False,
+                                   'execution': {'execution': 'local_foundry_evm_calls'},
+                                   'comparison': {'findings': []}}
+        second['verification'] = {'kernel_checked': False, 'evm_executed': True}
+        updated, _, _ = advance_baseline.next_version(report, self.baseline, self.spec, self.source)
+        self.assertEqual(updated['revision'], 1)
+
 
 if __name__ == '__main__':
     unittest.main()

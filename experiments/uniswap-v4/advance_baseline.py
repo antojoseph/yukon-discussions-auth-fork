@@ -43,14 +43,15 @@ def verify_candidate(root, report_path, history, spec, source, contract):
         comparison = compare(spec, observed)
         if comparison['findings']:
             raise ValueError('Proposed baseline still falsified by ' + name)
-        if any(action['op'] == 'call' for action in trace['actions']):
-            raise ValueError('Raw-call history lacks a checked Lean trace model: ' + name)
-        trace_path = folder / 'trace.json'
-        loop.write(trace_path, trace)
-        proof = loop.proof(trace_path, loop.run.ROOT / 'runs' / ('reproduced-baseline-proof-' + stamp + '-' + str(index)))
-        if proof.get('kernel_checked') is not True or proof.get('concrete_abstract_replay_agree') is not True:
-            raise ValueError('Promotion proof failed for ' + name)
-        results.append(dict(trace=name, sha256=digest(trace), kernel_checked=True,
+        kernel_checked = False
+        if not any(action['op'] == 'call' for action in trace['actions']):
+            trace_path = folder / 'trace.json'
+            loop.write(trace_path, trace)
+            proof = loop.proof(trace_path, loop.run.ROOT / 'runs' / ('reproduced-baseline-proof-' + stamp + '-' + str(index)))
+            if proof.get('kernel_checked') is not True or proof.get('concrete_abstract_replay_agree') is not True:
+                raise ValueError('Promotion proof failed for ' + name)
+            kernel_checked = True
+        results.append(dict(trace=name, sha256=digest(trace), kernel_checked=kernel_checked,
                             evm_executed=True, regressions_passed=observed['regressions_passed']))
     loop.write(evidence_root / 'promotion-checks.json', dict(schema_version=1, results=results))
     return traces[-1][1]
@@ -71,11 +72,18 @@ def next_version(report, baseline, spec, source):
     if (first.get('version') != version or first.get('spec') != spec or
             first.get('contract') != baseline['contract']):
         raise ValueError('Repair inputs differ from the current baseline')
-    if (first.get('verification', {}).get('kernel_checked') is not True or
-            first.get('repair_recheck', {}).get('kernel_checked') is not True or
+    has_raw_call = any(tx.get('action', {}).get('op') == 'call'
+                       for tx in first.get('execution', {}).get('transactions', []))
+    first_checked = (first.get('verification', {}).get('evm_executed') is True if has_raw_call else
+                     first.get('verification', {}).get('kernel_checked') is True)
+    second_checked = (second.get('verification', {}).get('evm_executed') is True if has_raw_call else
+                      second.get('verification', {}).get('kernel_checked') is True)
+    repair_checked = (first.get('repair_recheck', {}).get('execution', {}).get('execution') == 'local_foundry_evm_calls'
+                      if has_raw_call else first.get('repair_recheck', {}).get('kernel_checked') is True)
+    if (not first_checked or not repair_checked or
             first.get('repair_recheck', {}).get('comparison', {}).get('findings') or
             first.get('status') != 'repair_replayed_pending_review' or
-            second.get('verification', {}).get('kernel_checked') is not True or
+            not second_checked or
             second.get('comparison', {}).get('findings') or
             second.get('judgment', {}).get('verdict') != 'unsupported'):
         raise ValueError('Repair replay or independent second review did not pass')

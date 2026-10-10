@@ -137,8 +137,10 @@ For the two currently modeled repair choices, the host proposes a repair,
 replays the same trace, checks Lean and regressions, and obtains an independent
 second review. Before promotion, it also replays every trace in
 `specs/falsification-history.json` and the new submission against the proposed
-contract and base spec. Each modeled trace must have no remaining comparison
-finding, and the existing Lean witness check and Solidity regressions must pass.
+contract and base spec. Every trace must have no remaining comparison finding
+and pass the Solidity regressions. Modeled traces also get the existing Lean
+witness check. Raw EVM calls remain marked `kernel_checked: false` for the trace;
+concrete replay and independent judge review can still support baseline promotion.
 GitHub Actions then commits a new `baseline.json` revision and records the new
 trace in the history. A contract repair writes `specs/active/RebateHook.sol` and
 selects it as the active contract. A spec repair updates `specs/base.json`.
@@ -150,19 +152,18 @@ repair author and leaves the current baseline active pending verification. The
 promotion artifact records whether advancement succeeded. For a supported Lean
 specification gap, the judge sets `spec_gap: true`; the host proposes replacement
 base spec, Lean model and contract source, saved in `spec-extension-proposal.json`.
-That proposal is data and remains pending verification. The current trusted
-compiler cannot check arbitrary new Lean semantics or raw calls, so this path
-does not yet promote a judge-authored extension automatically. It needs an
-exact-artifact replay, Lean proof obligations for the new model, historical
-falsification checks, regressions, and an independent second review before
-the shared baseline changes.
+That proposal is data and remains pending verification. The current runner
+does not yet execute and re-review arbitrary judge-authored extensions, so
+this path does not yet promote them automatically. Later falsifications are
+expected to expose missing behavior after promotion; a Lean proof inside a
+model is not a claim of complete EVM correspondence.
 
 The only automatic repair choices are cumulative claim enforcement and removal
 of the draft one-unit minimum rebate. After those repairs, the two supplied
 fixtures should stop falsifying the active target. That result does not show
 that the contract or spec is free of other defects. Other defects observable
 through this transaction interface can be judged and credited. Their repairs
-require reviewed execution, regression and formal evidence before the shared
+require reviewed execution and regression evidence before the shared
 baseline can advance. Defects needing transactions outside this local interface
 require a versioned trace and executor extension. Do not treat the absence of
 another credited finding as a security or specification-completeness claim.

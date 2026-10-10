@@ -5,6 +5,7 @@ import difflib
 import hashlib
 import html
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -40,9 +41,9 @@ def validate_spec(spec):
     return spec
 
 
-def validate_judgment(j, comparison):
+def validate_judgment(j, comparison, transaction_ids=None):
     fields = {'schema_version', 'verdict', 'evidence_ids', 'requirement_ids', 'reasoning', 'questions'}
-    if not isinstance(j, dict) or set(j) != fields or type(j['schema_version']) is not int or j['schema_version'] != 1:
+    if not isinstance(j, dict) or set(j) not in (fields, fields | {'defect_key'}) or type(j['schema_version']) is not int or j['schema_version'] != 1:
         raise ValueError('Invalid judgment fields/version')
     if j['verdict'] not in ('contract_defect', 'spec_defect', 'both', 'ambiguous', 'unsupported'):
         raise ValueError('Unknown judgment')
@@ -53,9 +54,15 @@ def validate_judgment(j, comparison):
             raise ValueError('Invalid judge citations/questions')
     if not set(j['requirement_ids']) <= {'R1', 'R2', 'R3', 'R4', 'R5'}:
         raise ValueError('Unknown intent requirement citation')
-    ids = {f['id'] for f in comparison['findings']}
+    ids = set(transaction_ids) if transaction_ids is not None else {f['id'] for f in comparison['findings']}
     if not set(j['evidence_ids']) <= ids:
-        raise ValueError('Judge cited evidence that does not demonstrate a finding')
+        raise ValueError('Judge cited a transaction that was not executed')
+    key = j.get('defect_key', '')
+    target = {'contract_defect': 'contract', 'spec_defect': 'spec'}.get(j['verdict'])
+    if not isinstance(key, str) or (key and not re.fullmatch(r'(contract|spec):[a-z][a-z0-9_]{2,79}', key)):
+        raise ValueError('Invalid defect key')
+    if key and (target is None or not key.startswith(target + ':')):
+        raise ValueError('Defect key does not match judgment target')
     if j['verdict'] in ('contract_defect', 'spec_defect', 'both'):
         if not j['evidence_ids'] or not j['requirement_ids']:
             raise ValueError('Defect judgments require concrete evidence and requirement citations')
@@ -63,11 +70,14 @@ def validate_judgment(j, comparison):
             raise ValueError('Unresolved questions require ambiguous adjudication')
         cited = [f for f in comparison['findings'] if f['id'] in j['evidence_ids']]
         supported_requirements = {requirement for f in cited for requirement in f['intent_violations']}
-        if j['verdict'] == 'contract_defect' and not set(j['requirement_ids']) <= supported_requirements:
+        novel_evidence = (key not in ('', 'contract:cumulative_claims', 'spec:minimum_rebate') or
+                          any(evidence_id not in {f['id'] for f in comparison['findings']}
+                              for evidence_id in j['evidence_ids']))
+        if j['verdict'] == 'contract_defect' and not novel_evidence and not set(j['requirement_ids']) <= supported_requirements:
             raise ValueError('Judge requirement citation lacks observed intent evidence')
-        if j['verdict'] == 'contract_defect' and not any(f['intent_violations'] for f in cited):
+        if j['verdict'] == 'contract_defect' and not novel_evidence and not any(f['intent_violations'] for f in cited):
             raise ValueError('Contract defect requires an observed intent violation')
-        if j['verdict'] == 'spec_defect' and (not any(f['spec_mismatches'] for f in cited)
+        if j['verdict'] == 'spec_defect' and not novel_evidence and (not any(f['spec_mismatches'] for f in cited)
                                                or any(f['intent_violations'] for f in cited)):
             raise ValueError('Spec defect requires spec disagreement without observed intent violation')
     return j
@@ -202,26 +212,31 @@ def main():
             observed = execute(submission, contract != 'seeded', source, folder / 'execution', patched=contract == 'patched')
             r['execution'] = observed
             actual_model = compare({'claim_limit': 'per_call' if contract == 'seeded' else 'cumulative'}, observed)
-            if any(f['spec_mismatches'] for f in actual_model['findings']):
-                raise ValueError('Instrumented EVM and accounting model disagree')
+            r['contract_model_comparison'] = actual_model
             proof_out = run.ROOT / 'runs' / ('reproduced-proof-' + out.name + f'-{number}')
-            formal = proof(folder / 'trace.json', proof_out)
-            r['verification'] = dict(kernel_checked=True, reference_checks=str(proof_out.relative_to(run.ROOT)),
-                contract_correspondence='not_proved', abstract_all_traces_invariant_proved=True,
+            try:
+                formal = proof(folder / 'trace.json', proof_out)
+                proof_error = None
+            except ValueError as error:
+                formal = {'kernel_checked': False}
+                proof_error = str(error)
+            r['verification'] = dict(kernel_checked=formal['kernel_checked'], evm_executed=True,
+                formal_error=proof_error, reference_checks=str(proof_out.relative_to(run.ROOT)),
+                contract_correspondence='not_proved', abstract_all_traces_invariant_proved=formal['kernel_checked'],
                 exact_proposal_regressions_passed=observed['regressions_passed'])
             r['comparison'] = compare(spec, observed)
             write(folder / 'comparison.json', r['comparison'])
             payload.update(submission=submission, concrete_evidence=observed, comparison=r['comparison'], formal_scope=r['verification'])
-            payload['allowed_evidence_ids'] = [finding['id'] for finding in r['comparison']['findings']]
+            payload['allowed_evidence_ids'] = [tx['id'] for tx in observed['transactions']]
             print(f'Round {number}: independent semantic judgment', flush=True)
             if responses:
                 judgment = responses[i]['judge']
-                r['judgment'] = validate_judgment(judgment, r['comparison'])
+                r['judgment'] = validate_judgment(judgment, r['comparison'], payload['allowed_evidence_ids'])
             else:
                 for attempt in range(2):
                     judgment = agent('judge', payload, folder / ('judge-attempt-' + str(attempt + 1)), args)
                     try:
-                        r['judgment'] = validate_judgment(judgment, r['comparison'])
+                        r['judgment'] = validate_judgment(judgment, r['comparison'], payload['allowed_evidence_ids'])
                         break
                     except ValueError as error:
                         if attempt:
@@ -239,7 +254,14 @@ def main():
             if number == args.rounds:
                 r['status'] = state['status'] = 'round_limit_with_unresolved_defect'; break
             proposal = responses[i]['repair'] if responses else agent('repair', {**payload, 'judgment': judgment}, folder / 'proposer', args)
-            r['repair'] = validate_repair(proposal, judgment, spec, contract)
+            try:
+                r['repair'] = validate_repair(proposal, judgment, spec, contract)
+            except ValueError as error:
+                r['repair'] = proposal
+                r['status'] = state['status'] = 'repair_requires_review'
+                r['repair_error'] = str(error)
+                write(folder / 'repair.json', proposal)
+                break
             write(folder / 'repair.json', proposal)
             parent = version
             if proposal['target'] == 'contract':

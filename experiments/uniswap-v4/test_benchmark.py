@@ -63,6 +63,24 @@ class HostedTests(unittest.TestCase):
             self.assertEqual(benchmark.supported_falsification(changed, 'R2'),
                              ('contract', 'contract:cumulative_claims'))
 
+    def test_new_judge_supported_transaction_can_receive_distinct_credit(self):
+        report = copy.deepcopy(self.report())
+        first = report['rounds'][0]
+        first['execution'] = {'transactions': [{'id': 'tx-1'}]}
+        first['comparison'] = {'findings': []}
+        first['judgment'] = {'schema_version': 1, 'verdict': 'contract_defect',
+            'evidence_ids': ['tx-1'], 'requirement_ids': ['R5'],
+            'defect_key': 'contract:failed_transfer_accounting',
+            'reasoning': 'A failed transfer left accounting changed in the observed transaction.',
+            'questions': []}
+        first['verification'] = {'kernel_checked': False, 'evm_executed': True}
+        self.assertEqual(benchmark.supported_falsification(report, 'R5'),
+                         ('contract', 'contract:failed_transfer_accounting'))
+        self.assertIsNone(benchmark.supported_falsification(report, 'R2'))
+        first['judgment']['evidence_ids'] = ['tx-99']
+        with self.assertRaisesRegex(ValueError, 'not executed'):
+            benchmark.supported_falsification(report, 'R5')
+
     def test_missing_initial_evidence_fails_closed(self):
         for path, value in [(('accepted',), True), (('creator_approval',), 'approved'),
                             (('rounds', 0, 'verification', 'kernel_checked'), False)]:

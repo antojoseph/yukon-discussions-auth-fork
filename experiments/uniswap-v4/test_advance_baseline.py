@@ -10,8 +10,9 @@ from execution import digest, patch_contract
 class BaselineAdvanceTests(unittest.TestCase):
     def setUp(self):
         self.base = loop.run.BASE
-        self.baseline = json.loads((self.base / 'baseline.json').read_text())
-        self.spec = json.loads((self.base / 'specs/base.json').read_text())
+        self.baseline = {'schema_version': 1, 'revision': 0, 'contract': 'seeded',
+                         'contract_source': 'src/RebateHook.sol'}
+        self.spec = {**json.loads((self.base / 'specs/base.json').read_text()), 'minimum_rebate': 1}
         self.source = (self.base / 'src/RebateHook.sol').read_text()
         self.intent_hash = digest(json.loads((self.base / 'intent.json').read_text()))
 

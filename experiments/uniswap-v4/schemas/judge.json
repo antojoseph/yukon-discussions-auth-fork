@@ -6,6 +6,7 @@
     "verdict",
     "evidence_ids",
     "requirement_ids",
+    "defect_key",
     "reasoning",
     "questions"
   ],
@@ -46,6 +47,9 @@
       }
     },
     "reasoning": {
+      "type": "string"
+    },
+    "defect_key": {
       "type": "string"
     },
     "questions": {

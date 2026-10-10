@@ -7,7 +7,8 @@ from execution import compare, patch_contract
 
 class RepairRoutingTests(unittest.TestCase):
     def setUp(self):
-        self.spec = loop.validate_spec(json.loads((loop.run.BASE / 'specs/base.json').read_text()))
+        self.spec = loop.validate_spec({**json.loads((loop.run.BASE / 'specs/base.json').read_text()),
+                                        'minimum_rebate': 1})
         self.source = (loop.run.BASE / 'src/RebateHook.sol').read_text()
         self.findings = {'findings': [{'id': 'tx-4'}, {'id': 'tx-5'}]}
         self.judge = json.loads((loop.run.BASE / 'fixtures/contract-repair-responses.json').read_text())[0]['judge']
@@ -15,7 +16,7 @@ class RepairRoutingTests(unittest.TestCase):
     def test_judge_cannot_cite_unobserved_or_unmapped_violation(self):
         j = copy.deepcopy(self.judge)
         j['evidence_ids'] = ['tx-999']
-        with self.assertRaisesRegex(ValueError, 'does not demonstrate'):
+        with self.assertRaisesRegex(ValueError, 'not executed'):
             loop.validate_judgment(j, self.findings)
         j = copy.deepcopy(self.judge)
         j['requirement_ids'] = []

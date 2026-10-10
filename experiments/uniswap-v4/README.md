@@ -56,9 +56,10 @@ python3 experiments/uniswap-v4/loop.py \
 judgments. It verifies the judge/repair schema, cited evidence, repair routing,
 concrete re-execution, regression checks, and formal checks. Those fixtures are
 mechanism tests, not evidence of independent agent reliability. The optional
-Codex path is the independent LLM test. The supported repair catalog is bounded
-to cumulative claim limits and removal of the draft minimum rebate; arbitrary source patches or new
-economic assumptions require a new reviewed version. A contract verdict emits a
+Codex path is the independent LLM test. The automatic repair catalog is bounded
+to cumulative claim limits and removal of the draft minimum rebate. Other
+supported findings may receive credit, but their repairs require review and
+new replay and proof evidence before baseline advancement. A known contract verdict emits a
 Solidity diff and revised source; a spec verdict emits a revised JSON spec. Successful closed repairs advance the operational benchmark baseline. They
 do not grant creator semantic approval: `accepted: false` and
 `creator_approval: pending` remain.
@@ -75,7 +76,7 @@ This branch supplies the isolated `antojoseph/spec-prove-v4-internal` developmen
 
 `src/RebateHook.sol` implements a deliberately flawed custom hook and a repaired control. The initial target is the seeded variant (`repaired=false`), while the initial base spec has an independent draft rounding mistake. Both run with the pinned official Uniswap v4 PoolManager, Solidity 0.8.26, Foundry 1.7.1, and Lean 4.22.0. The contract defect belongs to our custom hook, not Uniswap. The host materializes a bounded contract patch or spec revision after the model's verdict; participants do not patch contracts.
 
-On each exact-input swap the hook collects 1% of gross output, rounded down, and credits half that fee, rounded down, as rebate. R1 includes that rounding rule. R2 requires cumulative claims to stay within earned rebates. R3 requires each pool's payments to stay within its own collected fees. R4 and R5 are regression-tested; this trace interface can demonstrate R1 spec or R2/R3 contract defects.
+On each exact-input swap the hook collects 1% of gross output, rounded down, and credits half that fee, rounded down, as rebate. R1 includes that rounding rule. R2 requires cumulative claims to stay within earned rebates. R3 requires each pool's payments to stay within its own collected fees. R4 and R5 are regression-tested. The judge may cite any executed call and R1–R5, but the trace interface still permits only swaps and claims by its fixed caller against two local pools. Bugs needing other callers, tokens, pools or call types cannot be demonstrated through this interface yet.
 
 ## Participate
 
@@ -105,7 +106,7 @@ evidence still feed the hosted spec comparison and independent judge.
 
 Setup supports Linux x86_64 and macOS arm64. It downloads checksum-pinned runtimes and commit-pinned v4 dependencies. Python 3.9+, Git, curl and tar are required; Linux tar needs zstd for the Lean archive. For explicit installed runtimes, set `V4_FORGE`, `V4_LEAN`, and `V4_SOLC` during setup; their paths are persisted locally for the separate run command.
 
-Edit only `submission/trace.json`. The schema is `experiments/uniswap-v4/submission.schema.json`: one to 32 `swap` or `claim` actions on pool A or B, integer amounts from 1 to 10^12, and a cited requirement R1, R2 or R3. Prose is data and is never compiled. No arbitrary participant source code or Lean proof is accepted.
+Edit only `submission/trace.json`. The schema is `experiments/uniswap-v4/submission.schema.json`: one to 32 `swap` or `claim` actions on pool A or B, integer amounts from 1 to 10^12, and a cited requirement R1–R5. Prose is data and is never compiled. No arbitrary participant source code or Lean proof is accepted.
 
 ```sh
 # Example attack; inspect it before copying.
@@ -121,10 +122,13 @@ The note must be 5–100 KiB of useful Markdown describing the tested trace, rep
 
 The first supported falsification of a distinct defect earns one impact credit.
 The participant submits only a bounded transaction trace. The host executes it,
-checks the initial Lean evidence, and obtains an independent judgment citing
+attempts the initial Lean check, and obtains an independent judgment citing
 transaction and intent requirements. Credit does **not** wait for the host's
 repair to succeed. Repeated evidence for the same defect earns no additional
-credit on the challenge leaderboard.
+credit on the challenge leaderboard. The judge supplies a root-cause key for
+deduplication; different keys for the same issue need host review. If the
+existing Lean model cannot represent the observed behavior, the score records
+`kernel_checked: false` and `evm_executed: true` instead of claiming a proof.
 
 The host then proposes a repair from the closed catalog, replays the same trace,
 checks Lean and regressions, and obtains an independent second review. If those
@@ -133,14 +137,20 @@ benchmark branch. A contract repair writes `specs/active/RebateHook.sol` and
 selects it as the active contract. A spec repair updates `specs/base.json`.
 Future submissions load those active files. A submission built on a stale
 baseline must sync and resubmit. Failed or unresolved host repairs are recorded
-but do not change the baseline; host maintainers must resolve them. The
+but do not change the baseline; host maintainers must resolve them. A finding
+outside the closed repair catalog receives `repair_requires_review` and leaves
+the current baseline active. The
 promotion artifact records whether advancement succeeded.
 
-The only closed repair choices are cumulative claim enforcement and removal of
-the draft one-unit minimum rebate. A new defect class, policy choice, contract
-family, or environment assumption needs an explicitly reviewed challenge
-version. Once both known defects have been repaired, these fixtures should no
-longer falsify the active target; continued hillclimbing needs a new version.
+The only automatic repair choices are cumulative claim enforcement and removal
+of the draft one-unit minimum rebate. After those repairs, the two supplied
+fixtures should stop falsifying the active target. That result does not show
+that the contract or spec is free of other defects. Other defects observable
+through this transaction interface can be judged and credited. Their repairs
+require reviewed execution, regression and formal evidence before the shared
+baseline can advance. Defects needing transactions outside this interface
+require a versioned trace and executor extension. Do not treat the absence of
+another credited finding as a security or specification-completeness claim.
 Creator semantic approval remains pending and `accepted` remains false after
 operational baseline advancement.
 
@@ -149,7 +159,8 @@ falsification and 0 otherwise. Yukon promotes only a strictly higher score, so
 it can reject a tied record even when the challenge leaderboard credits a
 new distinct defect. The leaderboard deduplicates by defect key across all
 hosted submissions. The binary scalar is not a coverage or security rating.
-Invalid input and failed initial execution or proof produce no score file.
+Invalid input and failed initial EVM execution produce no score file. A failed
+initial Lean check is reported explicitly and cannot count as a proof.
 
 The host-owned adapter clears stale scores, validates the input surface, runs
 concrete EVM and Lean checks, and sends evidence to tool-free host-funded

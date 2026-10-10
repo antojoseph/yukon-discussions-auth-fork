@@ -36,8 +36,8 @@ def read_submission(path):
         raise ValueError("unexpected submission fields")
     if type(x["schema_version"]) is not int or x["schema_version"] != 1 or x["family"] != "uniswap-v4-rebate-v1":
         raise ValueError("wrong schema or challenge family")
-    if x["requirement"] not in ("R1", "R2", "R3"):
-        raise ValueError("requirement must be R1, R2 or R3")
+    if x["requirement"] not in ("R1", "R2", "R3", "R4", "R5"):
+        raise ValueError("requirement must be R1, R2, R3, R4 or R5")
     if not isinstance(x["description"], str) or len(x["description"]) > 2000:
         raise ValueError("invalid description")
     if not isinstance(x["actions"], list) or not 1 <= len(x["actions"]) <= 32:

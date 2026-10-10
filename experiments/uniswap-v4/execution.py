@@ -112,14 +112,15 @@ def execute(submission, fixed, source, out, patched=False):
             if success not in (0, 1):
                 raise ValueError('Invalid EVM call result')
         after = observe()
+        anomalies = []
         if not success and after != previous:
-            raise ValueError('Rejected call changed observed storage or balances')
+            anomalies.append('rejected_call_changed_state')
         if any(after[p + '_claimed'] != after[p + '_paid'] for p in ('A', 'B')):
-            raise ValueError('Recipient claim accounting disagrees with pool payout')
+            anomalies.append('claim_accounting_differs_from_payout')
         if action['op'] == 'claim' and success and after['recipient_balance'] - previous['recipient_balance'] != action['amount']:
-            raise ValueError('Successful claim did not pay the requested amount')
+            anomalies.append('successful_claim_paid_unexpected_amount')
         events.append(dict(id=f'tx-{i+1}', action=action, succeeded=bool(success), fee=fee,
-                           return_data=returned, before=previous, after=after))
+                           return_data=returned, before=previous, after=after, anomalies=anomalies))
         previous = after
     if list(iterator):
         raise ValueError('Unexpected trailing concrete observations')

@@ -32,21 +32,26 @@ def supported_falsification(report, submitted_requirement):
     if report.get('contract_correspondence') != 'not_proved':
         raise ValueError('Incorrect proof scope')
     rounds = report.get('rounds', [])
-    if not rounds or rounds[0].get('verification', {}).get('kernel_checked') is not True:
-        raise ValueError('Missing initial Lean verification')
+    if not rounds or (rounds[0].get('verification', {}).get('kernel_checked') is not True and
+                      rounds[0].get('verification', {}).get('evm_executed') is not True):
+        raise ValueError('Missing initial execution or Lean verification')
     first = rounds[0]
     findings = first['comparison']['findings']
     violations = {v for f in findings for v in f['intent_violations']}
-    if not violations <= {'R2', 'R3'}:
-        raise ValueError('Unknown scored requirement')
-    judgment = loop.validate_judgment(first.get('judgment', {}), first['comparison'])
+    transaction_ids = [tx['id'] for tx in first.get('execution', {}).get('transactions', [])]
+    judgment = loop.validate_judgment(first.get('judgment', {}), first['comparison'], transaction_ids or None)
     cited = [f for f in findings if f['id'] in judgment.get('evidence_ids', [])]
+    if submitted_requirement not in judgment.get('requirement_ids', []):
+        return None
     if judgment.get('verdict') == 'contract_defect':
+        if judgment.get('defect_key'):
+            return 'contract', judgment['defect_key']
         if any(submitted_requirement in f['intent_violations'] for f in cited):
             return 'contract', 'contract:cumulative_claims'
     elif judgment.get('verdict') == 'spec_defect':
-        if (not violations and submitted_requirement in judgment.get('requirement_ids', []) and
-                any(f['spec_mismatches'] for f in cited)):
+        if judgment.get('defect_key'):
+            return 'spec', judgment['defect_key']
+        if not violations and any(f.get('spec_mismatches') for f in cited):
             return 'spec', 'spec:minimum_rebate'
     return None
 
@@ -72,7 +77,9 @@ def main():
     result = {'score': score, 'metrics': {'requirements_demonstrated': demonstrated,
               'verified_falsification': score, 'defect_key': defect_key, 'repair_target': target,
               'host_repair_verified': report['status'] == 'no_demonstrated_mismatch',
-              'kernel_checked': True, 'accepted': False, 'creator_approval': 'pending',
+              'kernel_checked': report['rounds'][0]['verification']['kernel_checked'],
+              'evm_executed': report['rounds'][0]['verification'].get('evm_executed', False),
+              'accepted': False, 'creator_approval': 'pending',
               'contract_correspondence': 'not_proved', 'judge_mode': report['judge_mode'],
               'model': model, 'workflow_status': report['status'], 'evidence': str(out.relative_to(ROOT))}}
     SCORE.parent.mkdir(exist_ok=True)

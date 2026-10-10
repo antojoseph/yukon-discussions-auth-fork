@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 1,
+  "revision": 2,
   "contract": "patched",
   "contract_source": "specs/active/RebateHook.sol"
 }

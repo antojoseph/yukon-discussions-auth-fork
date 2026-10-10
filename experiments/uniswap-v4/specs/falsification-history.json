@@ -8,6 +8,10 @@
     {
       "sha256": "28331141b4f593d5e947be61f61b503076b2af45172a2ebffd2425d6a220bfd7",
       "trace": "fixtures/minimum-rebate-trace.json"
+    },
+    {
+      "sha256": "f28647d91d41e8b71c67d6f260c4a2f2c44fc2156f608fa3165a7018ab55922e",
+      "trace": "fixtures/verified-f28647d91d41e8b7.json"
     }
   ]
 }

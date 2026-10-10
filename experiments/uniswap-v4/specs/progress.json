@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "state": "active",
+  "state": "stalled",
   "baseline_revision": 2,
-  "finding_sha256": null,
-  "reason": null
+  "finding_sha256": "f28647d91d41e8b71c67d6f260c4a2f2c44fc2156f608fa3165a7018ab55922e",
+  "reason": "A credited specification finding failed host repair replay. Manual specification and Lean model repair, full historical replay, and independent review are required before agents submit again."
 }

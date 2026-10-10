@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "family": "uniswap-v4-rebate-v1",
+  "requirement": "R2",
+  "description": "Multi-user claim falsification of the active spec's R2 accounting. Self swaps 10000 on A (fee 99, earned 49). Bob is funded with 20000 currency0, approves the dedicated router, and swaps 20000 on A through it (fee 199, earned 99 for Bob). Both users then claim exactly their own earned rebates (Bob 99, self 49) - each within their per-user cumulative entitlement, exactly as R2 and R4 require and as the patched contract enforces. The deterministic spec comparison nevertheless records an R2 violation at Bob's claim (pool-wide paid 99 exceeds the single modeled recipient's earned 49) and predicts self's fully-entitled claim of 49 must be rejected, while the contract correctly pays it. The spec and Lean model cover one recipient per pool, so multi-recipient claim accounting required by intent R2/R4 is misstated: a spec defect with a Lean coverage gap.",
+  "actions": [
+    {
+      "op": "swap",
+      "pool": "A",
+      "amount": 10000
+    },
+    {
+      "op": "call",
+      "target": "currency0",
+      "caller": "self",
+      "calldata": "0xa9059cbb0000000000000000000000000000000000000000000000000000000000000b0b0000000000000000000000000000000000000000000000000000000000004e20"
+    },
+    {
+      "op": "call",
+      "target": "currency0",
+      "caller": "bob",
+      "calldata": "0x095ea7b30000000000000000000000002a07706473244bc757e10f2a9e86fb532828afe3ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "op": "call",
+      "target": "router",
+      "caller": "bob",
+      "calldata": "0x1e2817de00000000000000000000000015cf58144ef33af1e14b5208015d11f9143e27b9000000000000000000000000212224d2f2d262cd093ee13240ca4873fccbba3c0000000000000000000000000000000000000000000000000000000000000064000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000440000000000000000000000000000000000000000000000000000000000000001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffb1e000000000000000000000000000000000000000000000000000000001000276a4"
+    },
+    {
+      "op": "call",
+      "target": "hook",
+      "caller": "bob",
+      "calldata": "0x98e5d7e2812acb4503f051057481634922e9ac1923821b796520e06c0b995af90a4ce303000000000000000000000000212224d2f2d262cd093ee13240ca4873fccbba3c0000000000000000000000000000000000000000000000000000000000000063"
+    },
+    {
+      "op": "claim",
+      "pool": "A",
+      "amount": 49
+    }
+  ]
+}

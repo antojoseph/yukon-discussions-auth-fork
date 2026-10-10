@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 import loop
+import extension
 from execution import compare, patch_contract
 
 
@@ -87,6 +88,27 @@ class RepairRoutingTests(unittest.TestCase):
         self.assertEqual(findings[0]['intent_violations'], [])
         self.assertIn('A_earned', findings[0]['spec_mismatches'])
         self.assertEqual(compare({**self.spec, 'minimum_rebate': 0}, observed)['findings'], [])
+
+    def test_spec_extension_requires_new_json_and_lean_without_unsafe_proofs(self):
+        revised = {**self.spec, 'schema_version': 2,
+                   'additional_requirements': ['R4: direct calls preserve the stated entitlement.']}
+        lean_source = (loop.run.BASE / 'lean/Rebate.lean').read_text()
+        proposal = {'schema_version': 1, 'specification': json.dumps(revised),
+                    'lean_source': lean_source + '\n-- Revised coverage.\n',
+                    'contract_source': self.source, 'reasoning': 'Extend caller behavior.'}
+        parsed, _, _ = extension.parse_proposal(proposal, self.spec, self.source,
+                                                 lean_source, 'spec_defect', True)
+        self.assertEqual(parsed, revised)
+        with self.assertRaisesRegex(ValueError, 'base-spec and Lean-model revision'):
+            extension.parse_proposal({**proposal, 'lean_source': lean_source}, self.spec,
+                                     self.source, lean_source, 'spec_defect', True)
+        with self.assertRaisesRegex(ValueError, 'Specification-only'):
+            extension.parse_proposal({**proposal, 'contract_source': self.source + '\n// changed\n'},
+                                     self.spec, self.source, lean_source, 'spec_defect', True)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, 'unapproved'):
+                extension.check_lean(lean_source + '\naxiom fabricated : False\n',
+                                     Path(directory) / 'unsafe')
 
 
 if __name__ == '__main__':

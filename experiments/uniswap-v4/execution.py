@@ -51,7 +51,7 @@ def runtime_env():
     return run.runtime_env()
 
 
-def execute(submission, fixed, source, out, patched=False):
+def execute(submission, fixed, source, out, patched=False, run_regressions=True):
     """Compile the exact recorded source in an isolated fixture and inspect actual calls."""
     out.mkdir(parents=True, exist_ok=False)
     run.verify_dependencies()
@@ -79,7 +79,7 @@ def execute(submission, fixed, source, out, patched=False):
             raise ValueError('Expected exactly one instrumented replay')
         logs = next(iter(tests.values()))['decoded_logs']
         regression_count = None
-        if patched:
+        if patched and run_regressions:
             # The historical seeded-attack test asserts the bug. All ten behavior
             # regressions must instead pass against the exact proposed source.
             code, raw = run.command(args + ['--match-contract', '^RebateHookTest$',

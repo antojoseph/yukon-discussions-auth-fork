@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Apply only a verified, closed repair to the next benchmark baseline."""
+"""Record a credited trace and promote a repair only after exact-candidate checks."""
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from datetime import datetime, timezone
 
 import loop
+import extension
 from execution import compare, digest, execute, patch_contract
 
 
-def checked_traces(root, report_path, history):
+def checked_traces(root, report_path, history, current_is_trace=False):
     """Use the recorded trace, not a fresh challenger, for every promotion replay."""
     if not isinstance(history, dict) or history.get('schema_version') != 1 or not isinstance(history.get('traces'), list):
         raise ValueError('Invalid falsification history')
@@ -24,7 +26,7 @@ def checked_traces(root, report_path, history):
         if digest(trace) != entry['sha256']:
             raise ValueError('Historical trace digest changed')
         traces.append((entry['trace'], trace))
-    current_path = report_path.parent / 'round-1/trace.json'
+    current_path = report_path if current_is_trace else report_path.parent / 'round-1/trace.json'
     current = loop.run.read_submission(current_path)
     traces.append(('new-submission', current))
     return traces
@@ -106,27 +108,129 @@ def next_version(report, baseline, spec, source):
     return updated, changed_spec, changed_source
 
 
+def next_extension_version(report, baseline, spec, source, lean_source, history, trace_path, root):
+    if report.get('status') != 'extension_verified':
+        return None
+    if (report.get('accepted') is not False or report.get('creator_approval') != 'pending' or
+            report.get('contract_correspondence') != 'not_proved' or
+            report.get('judge_mode') != 'hosted_openrouter_tool_free_roles'):
+        raise ValueError('Extension report lacks hosted review provenance')
+    rounds = report.get('rounds', [])
+    if len(rounds) != 1 or report.get('baseline_revision') != baseline['revision']:
+        raise ValueError('Extension did not start from the current baseline')
+    if baseline['contract'] != 'patched':
+        raise ValueError('Extension replay requires the active patched fixture')
+    first = rounds[0]
+    intent_hash = digest(json.loads((root / 'intent.json').read_text()))
+    version_inputs = dict(spec=spec, contract=baseline['contract'], source=source,
+                          intent_sha256=intent_hash)
+    if baseline.get('lean_source'):
+        version_inputs['lean_source'] = lean_source
+    if (report.get('intent_sha256') != intent_hash or first.get('status') != 'extension_verified' or
+            first.get('version') != digest(version_inputs) or
+            first.get('spec') != spec or first.get('contract') != baseline['contract'] or
+            first.get('verification', {}).get('evm_executed') is not True or
+            first.get('execution', {}).get('source_sha256') != hashlib.sha256(source.encode()).hexdigest()):
+        raise ValueError('Extension report differs from the current baseline')
+    transaction_ids = [tx['id'] for tx in first['execution']['transactions']]
+    judgment = loop.validate_judgment(first['judgment'], first['comparison'], transaction_ids)
+    if judgment['verdict'] not in ('contract_defect', 'spec_defect', 'both'):
+        raise ValueError('Extension lacks a supported initial falsification')
+    candidate_spec, candidate_source, candidate_lean = extension.parse_proposal(
+        first['spec_extension_proposal'], spec, source, lean_source,
+        judgment['verdict'], judgment.get('spec_gap', False))
+    recorded = first['extension_recheck']
+    candidate_hash = digest({'spec': candidate_spec, 'contract_source': candidate_source,
+                             'lean_source': candidate_lean})
+    if recorded.get('candidate_sha256') != candidate_hash or recorded.get('formal', {}).get('model_kernel_checked') is not True:
+        raise ValueError('Extension check does not bind the proposed files')
+    traces = checked_traces(root, trace_path, history, current_is_trace=True)
+    if [case.get('trace_sha256') for case in recorded.get('cases', [])] != [digest(trace) for _, trace in traces]:
+        raise ValueError('Extension review did not cover the full falsification history')
+    reviews = first.get('extension_reviews')
+    if not isinstance(reviews, list) or len(reviews) != len(recorded['cases']):
+        raise ValueError('Independent reviews do not cover every trace')
+    for review, case in zip(reviews, recorded['cases']):
+        checked = extension.validate_review(review, {**recorded, 'cases': [case]})
+        if checked['verdict'] != 'resolved':
+            raise ValueError('Independent review did not resolve a cited trace')
+    updated = {**baseline, 'revision': baseline['revision'] + 1, 'contract': 'patched',
+               'contract_source': 'specs/active/RebateHook.sol',
+               'lean_source': 'specs/active/Rebate.lean'}
+    return updated, candidate_spec, candidate_source, candidate_lean
+
+
+def verified_credit(score, report, trace):
+    import benchmark
+    metrics = score.get('metrics', {})
+    finding = benchmark.supported_falsification(report, trace['requirement'])
+    if (score.get('score') != 1 or metrics.get('verified_falsification') != 1 or
+            finding != (metrics.get('repair_target'), metrics.get('defect_key'))):
+        raise ValueError('Score does not match the judged falsification')
+    return metrics.get('host_repair_verified') is True
+
+
+def promote_candidate(root, report_path, report, baseline, spec, source, history, trace_path):
+    if report.get('status') == 'extension_verified':
+        active_lean = (root / baseline.get('lean_source', 'lean/Rebate.lean')).read_text()
+        updated, changed_spec, changed_source, changed_lean = next_extension_version(
+            report, baseline, spec, source, active_lean, history, trace_path, root)
+        replay = extension.replay_candidate(root, trace_path, history, changed_spec,
+                                            changed_source, changed_lean,
+                                            loop.run.ROOT / 'runs' / ('reproduced-extension-promotion-' +
+                                                datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')))
+        recorded = report['rounds'][0]['extension_recheck']
+        if (replay['candidate_sha256'] != recorded['candidate_sha256'] or
+                [case['trace_sha256'] for case in replay['cases']] !=
+                [case['trace_sha256'] for case in recorded['cases']] or
+                [digest(case['execution']) for case in replay['cases']] !=
+                [digest(case['execution']) for case in recorded['cases']]):
+            raise ValueError('Promotion replay differs from the reviewed candidate')
+        return updated, changed_spec, changed_source, changed_lean
+    result = next_version(report, baseline, spec, source)
+    if result is None:
+        raise ValueError('Report contains no verified repair')
+    updated, changed_spec, changed_source = result
+    verify_candidate(root, report_path, history, changed_spec,
+                     changed_source if changed_source is not None else source,
+                     updated['contract'])
+    return updated, changed_spec, changed_source, None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--report', type=Path, required=True)
     parser.add_argument('--base', type=Path, required=True, help='Checked-out current benchmark branch')
+    parser.add_argument('--score', type=Path, help='Authoritative score for recording a credited trace')
+    parser.add_argument('--result', type=Path, help='Write promotion outcome JSON')
     args = parser.parse_args()
     root = args.base.resolve() / 'experiments/uniswap-v4'
     baseline = json.loads((root / 'baseline.json').read_text())
     spec = loop.validate_spec(json.loads((root / 'specs/base.json').read_text()))
     source = (root / baseline['contract_source']).read_text()
     report = json.loads(args.report.read_text())
-    result = next_version(report, baseline, spec, source)
-    if result is None:
-        print('No verified repair to advance')
-        return
-    updated, changed_spec, changed_source = result
     history_path = root / 'specs/falsification-history.json'
     history = json.loads(history_path.read_text())
-    candidate_source = changed_source if changed_source is not None else source
-    current_trace = verify_candidate(root, args.report.resolve(), history, changed_spec,
-                                     candidate_source, updated['contract'])
+    trace_path = args.report.resolve().parent / 'round-1/trace.json'
+    current_trace = loop.run.read_submission(trace_path)
+    score = json.loads(args.score.read_text()) if args.score else None
+    should_promote = verified_credit(score, report, current_trace) if score else report.get('status') in (
+        'no_demonstrated_mismatch', 'extension_verified')
+    promotion = None
+    promotion_error = None
+    if should_promote:
+        try:
+            promotion = promote_candidate(root, args.report.resolve(), report, baseline,
+                                          spec, source, history, trace_path)
+        except Exception as error:
+            if score is None:
+                raise
+            promotion_error = str(error)[:2000]
+    elif score is None:
+        print('No verified repair to advance')
+        return
     current_hash = digest(current_trace)
+    recorded = False
     if current_hash not in {entry['sha256'] for entry in history['traces']}:
         trace_name = 'fixtures/verified-' + current_hash[:16] + '.json'
         trace_path = root / trace_name
@@ -134,13 +238,25 @@ def main():
         loop.write(trace_path, current_trace)
         history['traces'].append(dict(sha256=current_hash, trace=trace_name))
         loop.write(history_path, history)
-    (root / 'baseline.json').write_text(json.dumps(updated, indent=2) + '\n')
-    (root / 'specs/base.json').write_text(json.dumps(changed_spec, indent=2) + '\n')
-    if changed_source is not None:
-        destination = root / updated['contract_source']
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(changed_source)
-    print('Advanced baseline to revision', updated['revision'])
+        recorded = True
+    if promotion is not None:
+        updated, changed_spec, changed_source, changed_lean = promotion
+        (root / 'baseline.json').write_text(json.dumps(updated, indent=2) + '\n')
+        (root / 'specs/base.json').write_text(json.dumps(changed_spec, indent=2) + '\n')
+        if changed_source is not None:
+            destination = root / updated['contract_source']
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(changed_source)
+        if changed_lean is not None:
+            destination = root / updated['lean_source']
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(changed_lean)
+    result = {'status': 'baseline_updated' if promotion else 'finding_recorded' if recorded else 'no_change',
+              'baseline_revision': promotion[0]['revision'] if promotion else baseline['revision'],
+              'trace_sha256': current_hash, 'promotion_error': promotion_error}
+    if args.result:
+        loop.write(args.result, result)
+    print(json.dumps(result))
 
 
 if __name__ == '__main__':

@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 import run
 import hosted_model
+import extension
 from execution import compare, digest, execute, patch_contract, runtime_env
 sys.path.insert(0, str(run.ROOT))
 from app import invoke_agent
@@ -30,10 +31,20 @@ def read(path):
 
 
 def validate_spec(spec):
-    if not isinstance(spec, dict) or set(spec) != {'schema_version', 'family', 'claim_limit', 'minimum_rebate'}:
+    base_fields = {'schema_version', 'family', 'claim_limit', 'minimum_rebate'}
+    if not isinstance(spec, dict) or not base_fields <= set(spec):
         raise ValueError('Invalid base specification fields')
-    if type(spec['schema_version']) is not int or spec['schema_version'] != 1 or spec['family'] != 'uniswap-v4-rebate-v1':
+    if type(spec['schema_version']) is not int or spec['schema_version'] not in (1, 2) or spec['family'] != 'uniswap-v4-rebate-v1':
         raise ValueError('Unsupported specification version/family')
+    if spec['schema_version'] == 1 and set(spec) != base_fields:
+        raise ValueError('Invalid v1 specification fields')
+    if spec['schema_version'] == 2:
+        if set(spec) != base_fields | {'additional_requirements'}:
+            raise ValueError('Invalid v2 specification fields')
+        requirements = spec['additional_requirements']
+        if (not isinstance(requirements, list) or len(requirements) > 32 or
+                any(not isinstance(x, str) or not x.strip() or len(x) > 2000 for x in requirements)):
+            raise ValueError('Invalid additional specification requirements')
     if spec['claim_limit'] not in ('cumulative', 'per_call'):
         raise ValueError('Unsupported claim interpretation')
     if type(spec['minimum_rebate']) is not int or spec['minimum_rebate'] not in (0, 1):
@@ -113,9 +124,9 @@ def agent(role, payload, out, args):
                         instruction_root=run.BASE, schema_name=role + '.json')
 
 
-def propose_extension(payload, judgment, folder, args):
+def propose_extension(payload, judgment, folder, args, lean_source):
     extension = agent('repair_extension', {**payload, 'judgment': judgment,
-        'current_lean_model': (run.BASE / 'lean/Rebate.lean').read_text()},
+        'current_lean_model': lean_source},
         folder / 'spec-extension-proposer', args)
     if (not isinstance(extension, dict) or set(extension) !=
             {'schema_version', 'specification', 'lean_source', 'contract_source', 'reasoning'} or
@@ -125,6 +136,50 @@ def propose_extension(payload, judgment, folder, args):
         raise ValueError('Invalid judge-authored extension proposal')
     write(folder / 'spec-extension-proposal.json', extension)
     return extension
+
+
+def check_extension(payload, judgment, proposal, folder, args, spec, source, lean_source):
+    candidate_spec, candidate_source, candidate_lean = extension.parse_proposal(
+        proposal, spec, source, lean_source, judgment['verdict'], judgment.get('spec_gap', False))
+    write(folder / 'proposed-spec.json', candidate_spec)
+    (folder / 'proposed.sol').write_text(candidate_source)
+    (folder / 'proposed-Rebate.lean').write_text(candidate_lean)
+    history = read(run.BASE / 'specs/falsification-history.json')
+    checks = extension.replay_candidate(run.BASE, folder / 'trace.json', history,
+                                        candidate_spec, candidate_source, candidate_lean,
+                                        folder / 'extension-recheck')
+    reviews = []
+    for index, case in enumerate(checks['cases']):
+        case_checks = {**checks, 'cases': [case]}
+        review_payload = {'intent': payload['intent'], 'original_judgment': judgment,
+                          'candidate_specification': candidate_spec,
+                          'candidate_contract_source': candidate_source,
+                          'candidate_lean_source': candidate_lean,
+                          'candidate_checks': case_checks,
+                          'reviewed_candidate_sha256': checks['candidate_sha256'],
+                          'reviewed_trace_sha256': [case['trace_sha256']],
+                          'formal_scope': 'Lean checked candidate model theorems, not EVM correspondence or raw-call witnesses.'}
+        review = agent('review_extension', review_payload,
+                       folder / ('extension-reviewer-' + str(index)), args)
+        reviews.append(extension.validate_review(review, case_checks))
+    write(folder / 'extension-reviews.json', reviews)
+    return checks, reviews
+
+
+def handle_extension(r, state, payload, judgment, folder, args, spec, source, lean_source):
+    proposal = propose_extension(payload, judgment, folder, args, lean_source)
+    r['spec_extension_proposal'] = proposal
+    try:
+        checks, reviews = check_extension(payload, judgment, proposal, folder, args,
+                                         spec, source, lean_source)
+    except ValueError as error:
+        r['extension_error'] = str(error)
+        r['status'] = state['status'] = 'repair_failed_replay'
+        return
+    r['extension_recheck'] = checks
+    r['extension_reviews'] = reviews
+    r['status'] = state['status'] = ('extension_verified' if all(x['verdict'] == 'resolved' for x in reviews)
+                                    else 'extension_rejected_by_review')
 
 
 def proof(submission_path, out):
@@ -194,14 +249,17 @@ def main():
     parser.add_argument('--output', type=Path, default=run.ROOT / 'runs' / ('reproduced-v4-loop-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')))
     args = parser.parse_args()
     baseline = read(run.BASE / 'baseline.json')
-    if (not isinstance(baseline, dict) or set(baseline) !=
-            {'schema_version', 'revision', 'contract', 'contract_source'} or
+    baseline_fields = {'schema_version', 'revision', 'contract', 'contract_source'}
+    if (not isinstance(baseline, dict) or set(baseline) not in
+            (baseline_fields, baseline_fields | {'lean_source'}) or
             baseline['schema_version'] != 1 or type(baseline['revision']) is not int or baseline['revision'] < 0 or
             (baseline['contract'], baseline['contract_source']) not in
-            (('seeded', 'src/RebateHook.sol'), ('patched', 'specs/active/RebateHook.sol'))):
+            (('seeded', 'src/RebateHook.sol'), ('patched', 'specs/active/RebateHook.sol')) or
+            (baseline.get('lean_source') not in (None, 'specs/active/Rebate.lean'))):
         raise ValueError('Invalid active baseline')
     spec = validate_spec(read(args.spec)); contract = args.contract or baseline['contract']
     source = (run.BASE / (baseline['contract_source'] if args.contract is None else 'src/RebateHook.sol')).read_text()
+    lean_source = (run.BASE / baseline.get('lean_source', 'lean/Rebate.lean')).read_text()
     intent = read(run.BASE / 'intent.json')
     responses = read(args.responses) if args.responses else None
     out = args.output.resolve()
@@ -219,11 +277,15 @@ def main():
         for i in range(args.rounds):
             number = i + 1; folder = out / f'round-{number}'
             folder.mkdir()
-            version = digest(dict(spec=spec, contract=contract, source=source, intent_sha256=state['intent_sha256']))
+            version_inputs = dict(spec=spec, contract=contract, source=source, intent_sha256=state['intent_sha256'])
+            if baseline.get('lean_source'):
+                version_inputs['lean_source'] = lean_source
+            version = digest(version_inputs)
             r = dict(number=number, spec=spec.copy(), contract=contract, version=version, parent_version=parent, status='executing')
             state['rounds'].append(r)
             write(folder / 'spec.json', spec); (folder / 'contract.sol').write_text(source)
-            payload = dict(intent=intent, specification=spec, contract_source=source, contract_configuration=contract)
+            payload = dict(intent=intent, specification=spec, contract_source=source,
+                           lean_source=lean_source, contract_configuration=contract)
             if args.trace:
                 submission = run.read_submission(args.trace)
             elif responses:
@@ -240,9 +302,12 @@ def main():
             actual_model = compare({'claim_limit': 'per_call' if contract == 'seeded' else 'cumulative'}, observed)
             r['contract_model_comparison'] = actual_model
             proof_out = run.ROOT / 'runs' / ('reproduced-proof-' + out.name + f'-{number}')
-            if any(action['op'] == 'call' for action in submission['actions']):
+            active_lean_revised = bool(baseline.get('lean_source'))
+            if any(action['op'] == 'call' for action in submission['actions']) or active_lean_revised:
                 formal = {'kernel_checked': False}
-                proof_error = 'Raw local calls are outside the current Lean trace model'
+                proof_error = ('Raw local calls are outside the current Lean trace model' if
+                               any(action['op'] == 'call' for action in submission['actions']) else
+                               'The revised Lean model has no concrete trace witness compiler')
             else:
                 try:
                     formal = proof(folder / 'trace.json', proof_out)
@@ -255,6 +320,9 @@ def main():
                 reference_checks=str(proof_out.relative_to(run.ROOT)) if proof_out.exists() else None,
                 contract_correspondence='not_proved', abstract_all_traces_invariant_proved=formal['kernel_checked'],
                 exact_proposal_regressions_passed=observed['regressions_passed'])
+            if active_lean_revised:
+                model_check = extension.check_lean(lean_source, folder / 'active-lean-check')
+                r['verification']['model_kernel_checked'] = model_check['model_kernel_checked']
             r['comparison'] = compare(spec, observed)
             write(folder / 'comparison.json', r['comparison'])
             payload.update(submission=submission, concrete_evidence=observed, comparison=r['comparison'], formal_scope=r['verification'])
@@ -287,15 +355,13 @@ def main():
                 r['spec_extension_request'] = request
                 write(folder / 'spec-extension-request.json', request)
                 if not responses:
-                    r['spec_extension_proposal'] = propose_extension(payload, judgment, folder, args)
-                    r['status'] = state['status'] = 'spec_extension_proposed_pending_verification'
+                    handle_extension(r, state, payload, judgment, folder, args, spec, source, lean_source)
                 else:
                     r['status'] = state['status'] = 'spec_extension_required'
                 break
             if judgment['verdict'] == 'both':
                 if not responses:
-                    r['spec_extension_proposal'] = propose_extension(payload, judgment, folder, args)
-                    r['status'] = state['status'] = 'repair_proposed_pending_verification'
+                    handle_extension(r, state, payload, judgment, folder, args, spec, source, lean_source)
                 else:
                     r['status'] = state['status'] = 'repair_requires_review'
                 break
@@ -306,10 +372,10 @@ def main():
                 break
             if number == args.rounds:
                 r['status'] = state['status'] = 'round_limit_with_unresolved_defect'; break
-            if judgment.get('defect_key') and judgment['defect_key'] not in ('contract:cumulative_claims', 'spec:minimum_rebate'):
+            if (baseline.get('lean_source') or judgment.get('defect_key') and
+                    judgment['defect_key'] not in ('contract:cumulative_claims', 'spec:minimum_rebate')):
                 if not responses:
-                    r['spec_extension_proposal'] = propose_extension(payload, judgment, folder, args)
-                    r['status'] = state['status'] = 'repair_proposed_pending_verification'
+                    handle_extension(r, state, payload, judgment, folder, args, spec, source, lean_source)
                 else:
                     r['status'] = state['status'] = 'repair_requires_review'
                 break

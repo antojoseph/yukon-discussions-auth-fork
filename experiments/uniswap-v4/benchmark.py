@@ -78,9 +78,10 @@ def main():
                         for v in finding['intent_violations']}) if score else 0
     result = {'score': score, 'metrics': {'requirements_demonstrated': demonstrated,
               'verified_falsification': score, 'defect_key': defect_key, 'repair_target': target,
-              'host_repair_verified': report['status'] == 'no_demonstrated_mismatch',
+              'host_repair_verified': report['status'] in ('no_demonstrated_mismatch', 'extension_verified'),
               'spec_gap': report['rounds'][0]['judgment'].get('spec_gap', False),
               'kernel_checked': report['rounds'][0]['verification']['kernel_checked'],
+              'model_kernel_checked': report['rounds'][0].get('extension_recheck', {}).get('formal', {}).get('model_kernel_checked', False),
               'evm_executed': report['rounds'][0]['verification'].get('evm_executed', False),
               'accepted': False, 'creator_approval': 'pending',
               'contract_correspondence': 'not_proved', 'judge_mode': report['judge_mode'],

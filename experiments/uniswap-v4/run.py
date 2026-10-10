@@ -259,6 +259,37 @@ def main():
     state = {"validation_completed": False, "accepted": False, "creator_approval": "pending",
              "contract_correspondence": "not_proved", "deployment": "none", "dependencies": lock}
     try:
+        baseline = json.loads((BASE / 'baseline.json').read_text())
+        if baseline.get('lean_source'):
+            from execution import compare, execute
+            import extension
+            source = (BASE / baseline['contract_source']).read_text()
+            lean_source = (BASE / baseline['lean_source']).read_text()
+            observed = execute(submission, baseline['contract'] == 'patched', source,
+                               out / 'active-execution', patched=baseline['contract'] == 'patched')
+            comparison = compare(json.loads((BASE / 'specs/base.json').read_text()), observed)
+            model_check = extension.check_lean(lean_source, out / 'active-lean')
+            state.update(validation_completed=True, kernel_checked=False,
+                         model_kernel_checked=model_check['model_kernel_checked'],
+                         evm_executed=True, judge_run=False,
+                         submitted_requirement=submission['requirement'],
+                         baseline_revision=baseline['revision'], comparison=comparison,
+                         source_sha256={
+                             baseline['contract_source']: hashlib.sha256(source.encode()).hexdigest(),
+                             baseline['lean_source']: hashlib.sha256(lean_source.encode()).hexdigest(),
+                             'specs/base.json': hashlib.sha256((BASE / 'specs/base.json').read_bytes()).hexdigest(),
+                         },
+                         objection_supported=None)
+            (out / 'report.html').write_text(
+                '<!doctype html><meta charset="utf-8"><title>Active baseline preflight</title>'
+                '<h1>Active baseline preflight</h1><p>EVM replay and the active Lean model check completed. '
+                'No transaction witness theorem or LLM judgment ran.</p>'
+                '<p>Inspect evidence.json, active-execution/execution.json, and active-lean/lean-axioms.log.</p>')
+            print(json.dumps({'validation_completed': True, 'evm_executed': True,
+                              'model_kernel_checked': True, 'kernel_checked': False,
+                              'judge_run': False}, indent=2))
+            print('Report:', out / 'report.html')
+            return
         if any(action["op"] == "call" for action in submission["actions"]):
             from execution import compare, execute
             baseline = json.loads((BASE / "baseline.json").read_text())

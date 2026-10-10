@@ -58,7 +58,7 @@ jobs:
         env:
           OPENROUTER_API_KEY: ${{ secrets.SPEC_PROVE_OPENROUTER_API_KEY }}
         run: python3 experiments/uniswap-v4/benchmark.py
-      - name: Advance verified repair into the next baseline
+      - name: Record verified finding and advance checked repair
         if: startsWith(github.ref, 'refs/heads/submissions/')
         continue-on-error: true
         shell: bash
@@ -67,8 +67,8 @@ jobs:
         run: |
           set -euo pipefail
           trap 'printf "{\"status\":\"failed\"}\n" > .yukon/baseline-promotion.json' ERR
-          read -r repair_verified report_path < <(python3 -c 'import json; m=json.load(open(".yukon/score.json"))["metrics"]; print(str(m["host_repair_verified"]).lower(), m["evidence"] + "/report.json")')
-          if [[ "$repair_verified" != true ]]; then
+          read -r finding_verified report_path < <(python3 -c 'import json; m=json.load(open(".yukon/score.json"))["metrics"]; print(str(m["verified_falsification"] == 1).lower(), m["evidence"] + "/report.json")')
+          if [[ "$finding_verified" != true ]]; then
             printf '{"status":"not_applicable"}\n' > .yukon/baseline-promotion.json
             exit 0
           fi
@@ -80,16 +80,14 @@ jobs:
           fi
           next_checkout="$(mktemp -d)"
           git worktree add --detach "$next_checkout" "$base_sha"
-          python3 experiments/uniswap-v4/advance_baseline.py --report "$report_path" --base "$next_checkout"
+          python3 experiments/uniswap-v4/advance_baseline.py --report "$report_path" --base "$next_checkout" --score .yukon/score.json --result .yukon/baseline-promotion.json
           git -C "$next_checkout" add -A -- experiments/uniswap-v4
           if git -C "$next_checkout" diff --cached --quiet; then
-            printf '{"status":"no_change"}\n' > .yukon/baseline-promotion.json
             exit 0
           fi
-          git -C "$next_checkout" -c user.name='spec.prove host' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m "Advance verified v4 baseline"
+          git -C "$next_checkout" -c user.name='spec.prove host' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m "Record verified v4 finding and checked baseline"
           gh auth setup-git
           git -C "$next_checkout" push origin HEAD:refs/heads/codex/specprove-v4-internal
-          printf '{"status":"updated"}\n' > .yukon/baseline-promotion.json
       - name: Read score
         id: score
         if: success()

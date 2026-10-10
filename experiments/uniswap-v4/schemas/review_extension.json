@@ -1,0 +1,13 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "verdict", "reviewed_candidate_sha256", "reviewed_trace_sha256", "reasoning", "questions"],
+  "properties": {
+    "schema_version": {"type": "integer", "enum": [1]},
+    "verdict": {"type": "string", "enum": ["resolved", "still_falsified", "ambiguous"]},
+    "reviewed_candidate_sha256": {"type": "string"},
+    "reviewed_trace_sha256": {"type": "array", "items": {"type": "string"}},
+    "reasoning": {"type": "string"},
+    "questions": {"type": "array", "items": {"type": "string"}}
+  }
+}

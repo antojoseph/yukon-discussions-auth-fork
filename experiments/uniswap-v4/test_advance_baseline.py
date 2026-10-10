@@ -1,6 +1,13 @@
 import copy
+import contextlib
+import hashlib
+import io
 import json
+import shutil
+import tempfile
 import unittest
+from unittest.mock import patch
+from pathlib import Path
 
 import advance_baseline
 import loop
@@ -81,6 +88,128 @@ class BaselineAdvanceTests(unittest.TestCase):
         second['verification'] = {'kernel_checked': False, 'evm_executed': True}
         updated, _, _ = advance_baseline.next_version(report, self.baseline, self.spec, self.source)
         self.assertEqual(updated['revision'], 1)
+
+    def test_extension_promotion_binds_exact_files_and_every_trace(self):
+        root = self.base
+        baseline = json.loads((root / 'baseline.json').read_text())
+        spec = json.loads((root / 'specs/base.json').read_text())
+        source = (root / baseline['contract_source']).read_text()
+        lean_source = (root / 'lean/Rebate.lean').read_text()
+        revised_spec = {**spec, 'schema_version': 2,
+                        'additional_requirements': ['A caller-sensitive raw action has defined behavior.']}
+        revised_lean = lean_source + '\n-- Proposed additional coverage.\n'
+        proposal = {'schema_version': 1, 'specification': json.dumps(revised_spec),
+                    'contract_source': source, 'lean_source': revised_lean,
+                    'reasoning': 'Describe the missing behavior.'}
+        history = json.loads((root / 'specs/falsification-history.json').read_text())
+        trace_path = root / 'fixtures/repeated-claim.json'
+        traces = advance_baseline.checked_traces(root, trace_path, history, current_is_trace=True)
+        hashes = [digest(trace) for _, trace in traces]
+        candidate_hash = digest({'spec': revised_spec, 'contract_source': source,
+                                 'lean_source': revised_lean})
+        judgment = {'schema_version': 1, 'verdict': 'spec_defect', 'evidence_ids': ['tx-1'],
+                    'requirement_ids': ['R4'], 'defect_key': 'spec:caller_sensitive_rule',
+                    'spec_gap': True, 'reasoning': 'The model omits caller-sensitive behavior.',
+                    'questions': []}
+        report = {'status': 'extension_verified', 'baseline_revision': baseline['revision'],
+                  'accepted': False, 'creator_approval': 'pending',
+                  'contract_correspondence': 'not_proved',
+                  'judge_mode': 'hosted_openrouter_tool_free_roles',
+                  'intent_sha256': self.intent_hash,
+                  'rounds': [{'version': digest(dict(spec=spec, contract=baseline['contract'],
+                                                     source=source, intent_sha256=self.intent_hash)),
+                              'spec': spec, 'contract': baseline['contract'], 'status': 'extension_verified',
+                              'verification': {'evm_executed': True},
+                              'execution': {'source_sha256': hashlib.sha256(source.encode()).hexdigest(),
+                                            'transactions': [{'id': 'tx-1', 'action': {'op': 'call'}}]},
+                              'comparison': {'findings': []}, 'judgment': judgment,
+                              'spec_extension_proposal': proposal,
+                              'extension_recheck': {'candidate_sha256': candidate_hash,
+                                                    'formal': {'model_kernel_checked': True},
+                                                    'cases': [{'trace_sha256': h} for h in hashes]},
+                              'extension_reviews': [
+                                  {'schema_version': 1, 'verdict': 'resolved',
+                                   'reviewed_candidate_sha256': candidate_hash,
+                                   'reviewed_trace_sha256': [h],
+                                   'reasoning': 'This cited trace is addressed.', 'questions': []}
+                                  for h in hashes]}]}
+        updated, changed_spec, changed_source, changed_lean = advance_baseline.next_extension_version(
+            report, baseline, spec, source, lean_source, history, trace_path, root)
+        self.assertEqual(updated['revision'], baseline['revision'] + 1)
+        self.assertEqual(changed_spec, revised_spec)
+        self.assertEqual(changed_source, source)
+        self.assertEqual(changed_lean, revised_lean)
+        report['rounds'][0]['extension_recheck']['candidate_sha256'] = '0' * 64
+        with self.assertRaisesRegex(ValueError, 'bind the proposed files'):
+            advance_baseline.next_extension_version(report, baseline, spec, source,
+                                                    lean_source, history, trace_path, root)
+        report['rounds'][0]['extension_recheck']['candidate_sha256'] = candidate_hash
+        report['rounds'][0]['extension_reviews'].pop()
+        with self.assertRaisesRegex(ValueError, 'every trace'):
+            advance_baseline.next_extension_version(report, baseline, spec, source,
+                                                    lean_source, history, trace_path, root)
+
+    def test_credited_trace_is_recorded_when_host_repair_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / 'experiments/uniswap-v4'
+            (root / 'specs/active').mkdir(parents=True)
+            shutil.copytree(self.base / 'fixtures', root / 'fixtures')
+            for name in ('baseline.json',):
+                shutil.copyfile(self.base / name, root / name)
+            for name in ('specs/base.json', 'specs/falsification-history.json',
+                         'specs/active/RebateHook.sol'):
+                shutil.copyfile(self.base / name, root / name)
+            report_dir = base / 'report'
+            (report_dir / 'round-1').mkdir(parents=True)
+            trace_path = report_dir / 'round-1/trace.json'
+            shutil.copyfile(self.base / 'fixtures/repeated-claim.json', trace_path)
+            trace = json.loads(trace_path.read_text())
+            trace['description'] = 'Synthetic credited history case.'
+            trace_path.write_text(json.dumps(trace))
+            key = 'spec:novel_caller_rule'
+            report = {'status': 'repair_failed_replay', 'accepted': False,
+                      'creator_approval': 'pending', 'contract_correspondence': 'not_proved',
+                      'rounds': [{'verification': {'evm_executed': True},
+                                  'execution': {'transactions': [{'id': 'tx-1'}]},
+                                  'comparison': {'findings': []},
+                                  'judgment': {'schema_version': 1, 'verdict': 'spec_defect',
+                                               'evidence_ids': ['tx-1'], 'requirement_ids': [trace['requirement']],
+                                               'defect_key': key, 'spec_gap': True,
+                                               'reasoning': 'Synthetic finding for history persistence.',
+                                               'questions': []}}]}
+            report_path = report_dir / 'report.json'
+            report_path.write_text(json.dumps(report))
+            score_path = base / 'score.json'
+            score_path.write_text(json.dumps({'score': 1, 'metrics': {
+                'verified_falsification': 1, 'repair_target': 'spec', 'defect_key': key,
+                'host_repair_verified': False}}))
+            result_path = base / 'result.json'
+            original_history = (root / 'specs/falsification-history.json').read_text()
+            with patch('sys.argv', ['advance_baseline.py', '--report', str(report_path), '--base', str(base),
+                                    '--score', str(score_path), '--result', str(result_path)]):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    advance_baseline.main()
+            result = json.loads(result_path.read_text())
+            self.assertEqual(result['status'], 'finding_recorded')
+            self.assertEqual(json.loads((root / 'baseline.json').read_text())['revision'], 2)
+            entries = json.loads((root / 'specs/falsification-history.json').read_text())['traces']
+            self.assertIn(digest(trace), {entry['sha256'] for entry in entries})
+            (root / 'specs/falsification-history.json').write_text(original_history)
+            report['status'] = 'no_demonstrated_mismatch'
+            report_path.write_text(json.dumps(report))
+            score = json.loads(score_path.read_text())
+            score['metrics']['host_repair_verified'] = True
+            score_path.write_text(json.dumps(score))
+            with patch('sys.argv', ['advance_baseline.py', '--report', str(report_path), '--base', str(base),
+                                    '--score', str(score_path), '--result', str(result_path)]):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    advance_baseline.main()
+            result = json.loads(result_path.read_text())
+            self.assertEqual(result['status'], 'finding_recorded')
+            self.assertIsNotNone(result['promotion_error'])
+            self.assertIn(digest(trace), {entry['sha256'] for entry in
+                json.loads((root / 'specs/falsification-history.json').read_text())['traces']})
 
 
 if __name__ == '__main__':

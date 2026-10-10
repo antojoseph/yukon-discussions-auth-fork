@@ -56,11 +56,13 @@ python3 experiments/uniswap-v4/loop.py \
 judgments. It verifies the judge/repair schema, cited evidence, repair routing,
 concrete re-execution, regression checks, and formal checks. Those fixtures are
 mechanism tests, not evidence of independent agent reliability. The optional
-Codex path is the independent LLM test. The automatic repair catalog is bounded
-to cumulative claim limits and removal of the draft minimum rebate. Other
-supported findings may receive credit, but their repairs require review and
-new replay and proof evidence before baseline advancement. A known contract verdict emits a
-Solidity diff and revised source; a spec verdict emits a revised JSON spec. Successful closed repairs advance the operational benchmark baseline. They
+Codex path is the independent LLM test. The original closed repair catalog
+covers cumulative claim limits and removal of the draft minimum rebate.
+Other supported findings route to a model-authored candidate with exact-file
+EVM replay, Lean model check, regressions, and independent per-trace review.
+A known contract verdict emits a Solidity diff and revised source; a known
+spec verdict emits a revised JSON spec. Verified repairs advance the operational
+benchmark baseline. They
 do not grant creator semantic approval: `accepted: false` and
 `creator_approval: pending` remain.
 
@@ -74,7 +76,7 @@ This branch supplies the isolated `antojoseph/spec-prove-v4-internal` developmen
 
 ## What is frozen
 
-`src/RebateHook.sol` implements a deliberately flawed custom hook and a repaired control. The initial target is the seeded variant (`repaired=false`), while the initial base spec has an independent draft rounding mistake. Both run with the pinned official Uniswap v4 PoolManager, Solidity 0.8.26, Foundry 1.7.1, and Lean 4.22.0. The contract defect belongs to our custom hook, not Uniswap. The host materializes a bounded contract patch or spec revision after the model's verdict; participants do not patch contracts.
+`src/RebateHook.sol` implements a deliberately flawed custom hook and a repaired control. The initial target is the seeded variant (`repaired=false`), while the initial base spec has an independent draft rounding mistake. Both run with the pinned official Uniswap v4 PoolManager, Solidity 0.8.26, Foundry 1.7.1, and Lean 4.22.0. The contract defect belongs to our custom hook, not Uniswap. The host materializes a closed repair or verifies a model-authored candidate after the judgment; participants do not patch contracts.
 
 On each exact-input swap the hook collects 1% of gross output, rounded down, and credits half that fee, rounded down, as rebate. R1 includes that rounding rule. R2 requires cumulative claims to stay within earned rebates. R3 requires each pool's payments to stay within its own collected fees. R4 and R5 are regression-tested. The judge may cite any executed call and R1–R5. The trace interface supports structured swaps and claims plus bounded raw calldata calls to the local hook, router, manager or fixture tokens from the test actor or Bob. Other addresses, tokens, pools and external-chain state are outside this local challenge.
 
@@ -141,24 +143,38 @@ contract and base spec. Every trace must have no remaining comparison finding
 and pass the Solidity regressions. Modeled traces also get the existing Lean
 witness check. Raw EVM calls remain marked `kernel_checked: false` for the trace;
 concrete replay and independent judge review can still support baseline promotion.
-GitHub Actions then commits a new `baseline.json` revision and records the new
-trace in the history. A contract repair writes `specs/active/RebateHook.sol` and
+Every credited finding is recorded in the shared falsification history even
+when its host repair fails. GitHub Actions commits a new `baseline.json`
+revision only after promotion checks pass. A contract repair writes
+`specs/active/RebateHook.sol` and
 selects it as the active contract. A spec repair updates `specs/base.json`.
 Future submissions load those active files. A submission built on a stale
 baseline must sync and resubmit. Failed or unresolved host repairs are recorded
 but do not change the baseline; host maintainers must resolve them. A finding
 outside the closed repair catalog causes the host to call a separate model
-repair author and leaves the current baseline active pending verification. The
-promotion artifact records whether advancement succeeded. For a supported Lean
-specification gap, the judge sets `spec_gap: true`; the host proposes replacement
-base spec, Lean model and contract source, saved in `spec-extension-proposal.json`.
-That proposal is data and remains pending verification. The current runner
-does not yet execute and re-review arbitrary judge-authored extensions, so
-this path does not yet promote them automatically. Later falsifications are
-expected to expose missing behavior after promotion; a Lean proof inside a
-model is not a claim of complete EVM correspondence.
+repair author. For a supported Lean specification gap, the judge sets
+`spec_gap: true`; the author proposes replacement base spec, Lean model and
+contract source in `spec-extension-proposal.json`. The host compiles and audits
+the proposed Lean model, replays every recorded falsification and the new trace
+on the exact proposed contract, runs the Solidity regression suite once for
+that source, and asks a fresh
+reviewer to inspect all replay evidence against creator intent. Only a resolved
+review can enter the promotion step, which repeats the exact candidate checks
+and binds the reviewed file and trace hashes before updating `specs/base.json`,
+`specs/active/Rebate.lean`, `specs/active/RebateHook.sol`, and `baseline.json`.
+Failed checks or unresolved review leave the shared baseline unchanged. The
+promotion artifact records whether advancement succeeded. Raw-call traces
+remain `trace_kernel_checked: false` even when the Lean model itself compiles.
+Later falsifications are expected to expose missing behavior after promotion;
+a Lean proof inside a model is not a claim of complete EVM correspondence.
+Version 2 of the base-spec JSON retains the original accounting fields and
+adds `additional_requirements` for newly judged behavior. The deterministic
+comparison still checks its original accounting fields; the independent
+reviewer assesses new requirements against the full EVM transaction ledger and
+candidate sources. Its resolved verdict is evidence for promotion, not creator
+semantic approval.
 
-The only automatic repair choices are cumulative claim enforcement and removal
+The original closed repair choices are cumulative claim enforcement and removal
 of the draft one-unit minimum rebate. After those repairs, the two supplied
 fixtures should stop falsifying the active target. That result does not show
 that the contract or spec is free of other defects. Other defects observable

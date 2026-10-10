@@ -7,7 +7,7 @@ from urllib import error, request
 
 
 BASE = Path(__file__).resolve().parent
-ROLES = {'challenger', 'judge', 'repair', 'repair_extension'}
+ROLES = {'challenger', 'judge', 'repair', 'repair_extension', 'review_extension'}
 MODEL = 'openai/gpt-6.1-sol'
 
 

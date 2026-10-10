@@ -1,13 +1,25 @@
 {
   "schema_version": 1,
   "family": "uniswap-v4-rebate-v1",
-  "requirement": "R2",
-  "description": "Swap 10000 on A (collect 99, earn 49) and 10000 on B (collect 99, earn 49), then claim 49 on pool A three times. The seeded hook checks each request against lifetime entitlement (49) instead of remaining entitlement, so all three succeed and pay 147 total: 147 > 49 earned demonstrates R2, and 147 > 99 collected on A demonstrates R3 because the third payment is backed by pool B's reserve (custody 198 -> 51, below B's 99). The repaired control pays 49 once and rejects the two repeats with no violation.",
+  "requirement": "R1",
+  "description": "Second-currency falsification of the active spec's R1 accounting. A structured 10000 forward swap on pool A collects a 99-unit fee in currency1 and the specification's comparison tracks every unit (collected 99, earned 49). A reverse exact-input swap of 20000 through the same dedicated router then collects a 199-unit fee in currency0 and credits 99 earned rebate units in currency0 - the identical R1 rule in the pool's other output token, supported by the contract and regression-tested - yet the specification's accounting, claim rule and R2/R3 checks record nothing for it: they model only currency1. The subsequent claim of exactly the 99 earned currency0 rebate units succeeds in the contract with no specification prediction available at all. The spec and Lean model omit the entire second-currency rebate dimension required by intent R1 (with R2/R3 per-currency accounting): a specification defect with a Lean coverage gap.",
   "actions": [
-    {"op": "swap", "pool": "A", "amount": 10000},
-    {"op": "swap", "pool": "B", "amount": 10000},
-    {"op": "claim", "pool": "A", "amount": 49},
-    {"op": "claim", "pool": "A", "amount": 49},
-    {"op": "claim", "pool": "A", "amount": 49}
+    {
+      "op": "swap",
+      "pool": "A",
+      "amount": 10000
+    },
+    {
+      "op": "call",
+      "target": "router",
+      "caller": "self",
+      "calldata": "0x1e2817de00000000000000000000000015cf58144ef33af1e14b5208015d11f9143e27b9000000000000000000000000212224d2f2d262cd093ee13240ca4873fccbba3c0000000000000000000000000000000000000000000000000000000000000064000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000440000000000000000000000000000000000000000000000000000000000000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffb1e0000000000000000000000000fffd8963efd1fc6a506488495d951d5263988d25"
+    },
+    {
+      "op": "call",
+      "target": "hook",
+      "caller": "self",
+      "calldata": "0x98e5d7e2812acb4503f051057481634922e9ac1923821b796520e06c0b995af90a4ce30300000000000000000000000015cf58144ef33af1e14b5208015d11f9143e27b90000000000000000000000000000000000000000000000000000000000000063"
+    }
   ]
 }

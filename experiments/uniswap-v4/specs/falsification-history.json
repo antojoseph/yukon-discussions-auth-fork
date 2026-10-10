@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "traces": [
+    {
+      "sha256": "ea8c8a91b1fe1e76bbd07d0869421a057fb89528983a4f3f5e50ff82e69fffe5",
+      "trace": "fixtures/repeated-claim.json"
+    },
+    {
+      "sha256": "28331141b4f593d5e947be61f61b503076b2af45172a2ebffd2425d6a220bfd7",
+      "trace": "fixtures/minimum-rebate-trace.json"
+    }
+  ]
+}

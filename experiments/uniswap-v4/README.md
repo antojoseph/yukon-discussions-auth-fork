@@ -133,10 +133,14 @@ deduplication; different keys for the same issue need host review. If the
 existing Lean model cannot represent the observed behavior, the score records
 `kernel_checked: false` and `evm_executed: true` instead of claiming a proof.
 
-The host then proposes a repair from the closed catalog, replays the same trace,
-checks Lean and regressions, and obtains an independent second review. If those
-checks pass, GitHub Actions commits a new `baseline.json` revision to the
-benchmark branch. A contract repair writes `specs/active/RebateHook.sol` and
+For the two currently modeled repair choices, the host proposes a repair,
+replays the same trace, checks Lean and regressions, and obtains an independent
+second review. Before promotion, it also replays every trace in
+`specs/falsification-history.json` and the new submission against the proposed
+contract and base spec. Each modeled trace must have no remaining comparison
+finding, and the existing Lean witness check and Solidity regressions must pass.
+GitHub Actions then commits a new `baseline.json` revision and records the new
+trace in the history. A contract repair writes `specs/active/RebateHook.sol` and
 selects it as the active contract. A spec repair updates `specs/base.json`.
 Future submissions load those active files. A submission built on a stale
 baseline must sync and resubmit. Failed or unresolved host repairs are recorded
@@ -144,12 +148,14 @@ but do not change the baseline; host maintainers must resolve them. A finding
 outside the closed repair catalog receives `repair_requires_review` and leaves
 the current baseline active. The promotion artifact records whether
 advancement succeeded. For a supported Lean specification gap, the judge sets
-`spec_gap: true` and the run writes `spec-extension-request.json` citing the
-transaction and requirement. Its status is `spec_extension_required`. The host
-must update the base spec and trusted Lean model, replay the trace, recheck
-Lean and regressions, and obtain independent review before advancing the
-shared baseline. The compiler does not accept model-authored Lean source as a
-proof shortcut.
+`spec_gap: true`; the host calls a separate repair author to propose replacement
+base spec, Lean model and contract source, saved in `spec-extension-proposal.json`.
+That proposal is data and remains pending verification. The current trusted
+compiler cannot check arbitrary new Lean semantics or raw calls, so this path
+does not yet promote a judge-authored extension automatically. It needs an
+exact-artifact replay, Lean proof obligations for the new model, historical
+falsification checks, regressions, and an independent second review before
+the shared baseline changes.
 
 The only automatic repair choices are cumulative claim enforcement and removal
 of the draft one-unit minimum rebate. After those repairs, the two supplied

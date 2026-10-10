@@ -272,8 +272,21 @@ def main():
                     status='pending_spec_extension_review')
                 r['spec_extension_request'] = request
                 write(folder / 'spec-extension-request.json', request)
-                r['status'] = state['status'] = ('spec_extension_required' if judgment['verdict'] == 'spec_defect'
-                                                else 'needs_creator_review')
+                if not responses:
+                    extension = agent('repair_extension', {**payload, 'judgment': judgment,
+                        'current_lean_model': (run.BASE / 'lean/Rebate.lean').read_text()},
+                        folder / 'spec-extension-proposer', args)
+                    if (not isinstance(extension, dict) or set(extension) !=
+                            {'schema_version', 'specification', 'lean_source', 'contract_source', 'reasoning'} or
+                            extension['schema_version'] != 1 or
+                            any(not isinstance(extension[k], str) or not extension[k].strip() or
+                                len(extension[k]) > 100000 for k in ('specification', 'lean_source', 'contract_source', 'reasoning'))):
+                        raise ValueError('Invalid judge-authored extension proposal')
+                    r['spec_extension_proposal'] = extension
+                    write(folder / 'spec-extension-proposal.json', extension)
+                    r['status'] = state['status'] = 'spec_extension_proposed_pending_verification'
+                else:
+                    r['status'] = state['status'] = 'spec_extension_required'
                 break
             if judgment['verdict'] in ('both', 'ambiguous'):
                 r['status'] = state['status'] = 'needs_creator_review'; break

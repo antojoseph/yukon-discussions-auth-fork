@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "specification", "lean_source", "contract_source", "reasoning"],
+  "properties": {
+    "schema_version": {"type": "integer", "enum": [1]},
+    "specification": {"type": "string"},
+    "lean_source": {"type": "string"},
+    "contract_source": {"type": "string"},
+    "reasoning": {"type": "string"}
+  }
+}

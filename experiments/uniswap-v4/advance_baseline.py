@@ -3,9 +3,57 @@
 import argparse
 import json
 from pathlib import Path
+from datetime import datetime, timezone
 
 import loop
-from execution import digest, patch_contract
+from execution import compare, digest, execute, patch_contract
+
+
+def checked_traces(root, report_path, history):
+    """Use the recorded trace, not a fresh challenger, for every promotion replay."""
+    if not isinstance(history, dict) or history.get('schema_version') != 1 or not isinstance(history.get('traces'), list):
+        raise ValueError('Invalid falsification history')
+    traces = []
+    for entry in history['traces']:
+        if not isinstance(entry, dict) or set(entry) != {'sha256', 'trace'}:
+            raise ValueError('Invalid historical trace entry')
+        relative = Path(entry['trace'])
+        if relative.is_absolute() or '..' in relative.parts or relative.parts[:1] != ('fixtures',):
+            raise ValueError('Historical trace path must be under fixtures')
+        trace = loop.run.read_submission(root / relative)
+        if digest(trace) != entry['sha256']:
+            raise ValueError('Historical trace digest changed')
+        traces.append((entry['trace'], trace))
+    current_path = report_path.parent / 'round-1/trace.json'
+    current = loop.run.read_submission(current_path)
+    traces.append(('new-submission', current))
+    return traces
+
+
+def verify_candidate(root, report_path, history, spec, source, contract):
+    """Re-execute all recorded falsifications on the exact proposed artifacts."""
+    traces = checked_traces(root, report_path, history)
+    stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+    evidence_root = loop.run.ROOT / 'runs' / ('reproduced-baseline-promotion-' + stamp)
+    evidence_root.mkdir(parents=True, exist_ok=False)
+    results = []
+    for index, (name, trace) in enumerate(traces):
+        folder = evidence_root / str(index)
+        observed = execute(trace, contract == 'patched', source, folder / 'execution', patched=contract == 'patched')
+        comparison = compare(spec, observed)
+        if comparison['findings']:
+            raise ValueError('Proposed baseline still falsified by ' + name)
+        if any(action['op'] == 'call' for action in trace['actions']):
+            raise ValueError('Raw-call history lacks a checked Lean trace model: ' + name)
+        trace_path = folder / 'trace.json'
+        loop.write(trace_path, trace)
+        proof = loop.proof(trace_path, loop.run.ROOT / 'runs' / ('reproduced-baseline-proof-' + stamp + '-' + str(index)))
+        if proof.get('kernel_checked') is not True or proof.get('concrete_abstract_replay_agree') is not True:
+            raise ValueError('Promotion proof failed for ' + name)
+        results.append(dict(trace=name, sha256=digest(trace), kernel_checked=True,
+                            evm_executed=True, regressions_passed=observed['regressions_passed']))
+    loop.write(evidence_root / 'promotion-checks.json', dict(schema_version=1, results=results))
+    return traces[-1][1]
 
 
 def next_version(report, baseline, spec, source):
@@ -65,6 +113,19 @@ def main():
         print('No verified repair to advance')
         return
     updated, changed_spec, changed_source = result
+    history_path = root / 'specs/falsification-history.json'
+    history = json.loads(history_path.read_text())
+    candidate_source = changed_source if changed_source is not None else source
+    current_trace = verify_candidate(root, args.report.resolve(), history, changed_spec,
+                                     candidate_source, updated['contract'])
+    current_hash = digest(current_trace)
+    if current_hash not in {entry['sha256'] for entry in history['traces']}:
+        trace_name = 'fixtures/verified-' + current_hash[:16] + '.json'
+        trace_path = root / trace_name
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        loop.write(trace_path, current_trace)
+        history['traces'].append(dict(sha256=current_hash, trace=trace_name))
+        loop.write(history_path, history)
     (root / 'baseline.json').write_text(json.dumps(updated, indent=2) + '\n')
     (root / 'specs/base.json').write_text(json.dumps(changed_spec, indent=2) + '\n')
     if changed_source is not None:

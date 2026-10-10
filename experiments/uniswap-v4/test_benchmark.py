@@ -81,6 +81,35 @@ class HostedTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'not executed'):
             benchmark.supported_falsification(report, 'R5')
 
+    def test_judged_lean_spec_gap_receives_spec_credit_without_claiming_proof(self):
+        report = copy.deepcopy(self.report())
+        first = report['rounds'][0]
+        first['execution'] = {'transactions': [{'id': 'tx-1'}]}
+        first['verification'] = {'kernel_checked': False, 'evm_executed': True}
+        first['comparison'] = {'findings': []}
+        first['judgment'] = {'schema_version': 1, 'verdict': 'spec_defect',
+            'evidence_ids': ['tx-1'], 'requirement_ids': ['R4'],
+            'defect_key': 'spec:unauthorized_hook_callback', 'spec_gap': True,
+            'reasoning': 'The creator forbids this caller, but the Lean model has no caller dimension.',
+            'questions': []}
+        report['status'] = 'spec_extension_required'
+        self.assertEqual(benchmark.supported_falsification(report, 'R4'),
+                         ('spec', 'spec:unauthorized_hook_callback'))
+        first['judgment']['verdict'] = 'contract_defect'
+        with self.assertRaisesRegex(ValueError, 'requires a specification verdict'):
+            benchmark.supported_falsification(report, 'R4')
+
+    def test_joint_contract_and_spec_falsification_gets_one_joint_key(self):
+        report = copy.deepcopy(self.report())
+        first = report['rounds'][0]
+        first['judgment'] = {'schema_version': 1, 'verdict': 'both',
+            'evidence_ids': ['tx-4'], 'requirement_ids': ['R2'],
+            'defect_key': 'both:claim_entitlement_gap', 'spec_gap': True,
+            'reasoning': 'The contract overpays and the Lean specification omits the caller condition.',
+            'questions': []}
+        self.assertEqual(benchmark.supported_falsification(report, 'R2'),
+                         ('both', 'both:claim_entitlement_gap'))
+
     def test_missing_initial_evidence_fails_closed(self):
         for path, value in [(('accepted',), True), (('creator_approval',), 'approved'),
                             (('rounds', 0, 'verification', 'kernel_checked'), False)]:

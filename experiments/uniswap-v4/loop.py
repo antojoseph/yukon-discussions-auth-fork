@@ -43,7 +43,8 @@ def validate_spec(spec):
 
 def validate_judgment(j, comparison, transaction_ids=None):
     fields = {'schema_version', 'verdict', 'evidence_ids', 'requirement_ids', 'reasoning', 'questions'}
-    if not isinstance(j, dict) or set(j) not in (fields, fields | {'defect_key'}) or type(j['schema_version']) is not int or j['schema_version'] != 1:
+    optional = {'defect_key', 'spec_gap'}
+    if not isinstance(j, dict) or not fields <= set(j) or not set(j) <= fields | optional or type(j['schema_version']) is not int or j['schema_version'] != 1:
         raise ValueError('Invalid judgment fields/version')
     if j['verdict'] not in ('contract_defect', 'spec_defect', 'both', 'ambiguous', 'unsupported'):
         raise ValueError('Unknown judgment')
@@ -58,8 +59,14 @@ def validate_judgment(j, comparison, transaction_ids=None):
     if not set(j['evidence_ids']) <= ids:
         raise ValueError('Judge cited a transaction that was not executed')
     key = j.get('defect_key', '')
-    target = {'contract_defect': 'contract', 'spec_defect': 'spec'}.get(j['verdict'])
-    if not isinstance(key, str) or (key and not re.fullmatch(r'(contract|spec):[a-z][a-z0-9_]{2,79}', key)):
+    if 'spec_gap' in j and type(j['spec_gap']) is not bool:
+        raise ValueError('Invalid Lean specification gap flag')
+    if j.get('spec_gap') and j['verdict'] not in ('spec_defect', 'both'):
+        raise ValueError('Lean specification gap requires a specification verdict')
+    if j.get('spec_gap') and not key:
+        raise ValueError('Lean specification gap requires a defect key')
+    target = {'contract_defect': 'contract', 'spec_defect': 'spec', 'both': 'both'}.get(j['verdict'])
+    if not isinstance(key, str) or (key and not re.fullmatch(r'(contract|spec|both):[a-z][a-z0-9_]{2,79}', key)):
         raise ValueError('Invalid defect key')
     if key and (target is None or not key.startswith(target + ':')):
         raise ValueError('Defect key does not match judgment target')
@@ -256,6 +263,18 @@ def main():
                 payload.pop('previous_judgment', None)
                 payload.pop('citation_correction', None)
             write(folder / 'judgment.json', judgment)
+            if judgment.get('spec_gap') and judgment['verdict'] in ('spec_defect', 'both'):
+                request = dict(schema_version=1, baseline_revision=state['baseline_revision'],
+                    defect_key=judgment['defect_key'], evidence_ids=judgment['evidence_ids'],
+                    requirement_ids=judgment['requirement_ids'], reasoning=judgment['reasoning'],
+                    trace=folder.joinpath('trace.json').relative_to(run.ROOT).as_posix(),
+                    required_artifacts=['specs/base.json', 'lean/Rebate.lean'],
+                    status='pending_spec_extension_review')
+                r['spec_extension_request'] = request
+                write(folder / 'spec-extension-request.json', request)
+                r['status'] = state['status'] = ('spec_extension_required' if judgment['verdict'] == 'spec_defect'
+                                                else 'needs_creator_review')
+                break
             if judgment['verdict'] in ('both', 'ambiguous'):
                 r['status'] = state['status'] = 'needs_creator_review'; break
             if judgment['verdict'] == 'unsupported':

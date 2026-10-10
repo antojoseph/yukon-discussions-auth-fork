@@ -109,7 +109,7 @@ independent semantic judgment.
 
 Setup supports Linux x86_64 and macOS arm64. It downloads checksum-pinned runtimes and commit-pinned v4 dependencies. Python 3.9+, Git, curl and tar are required; Linux tar needs zstd for the Lean archive. For explicit installed runtimes, set `V4_FORGE`, `V4_LEAN`, and `V4_SOLC` during setup; their paths are persisted locally for the separate run command.
 
-Edit only `submission/trace.json`. The schema is `experiments/uniswap-v4/submission.schema.json`: one to 32 actions and a cited requirement R1–R5. A `swap` or `claim` action uses pool A or B and an integer amount from 1 to 10^12. A `call` action uses a named local target, caller `self` or `bob`, and up to 2,048 bytes of hex calldata. For example, `{"op":"call","target":"hook","caller":"bob","calldata":"0x"}` makes a direct local EVM call. Raw calls execute in Foundry but are outside the current Lean trace model; their score reports `kernel_checked: false`. Prose is data and is never compiled. No arbitrary participant source code or Lean proof is accepted.
+Edit only `submission/trace.json`. The schema is `experiments/uniswap-v4/submission.schema.json`: one to 32 actions and a cited requirement R1–R5. A `swap` or `claim` action uses pool A or B and an integer amount from 1 to 10^12. A `call` action uses a named local target, caller `self` or `bob`, and up to 2,048 bytes of hex calldata. For example, `{"op":"call","target":"hook","caller":"bob","calldata":"0x"}` makes a direct local EVM call. Raw calls execute in Foundry but are outside the current Lean trace model; their score reports `kernel_checked: false`. That status only describes proof coverage; a raw call is not a defect by itself. The judge must identify a demonstrated mismatch with creator intent. Prose is data and is never compiled. No arbitrary participant source code or Lean proof is accepted.
 
 ```sh
 # Example attack; inspect it before copying.
@@ -142,8 +142,14 @@ Future submissions load those active files. A submission built on a stale
 baseline must sync and resubmit. Failed or unresolved host repairs are recorded
 but do not change the baseline; host maintainers must resolve them. A finding
 outside the closed repair catalog receives `repair_requires_review` and leaves
-the current baseline active. The
-promotion artifact records whether advancement succeeded.
+the current baseline active. The promotion artifact records whether
+advancement succeeded. For a supported Lean specification gap, the judge sets
+`spec_gap: true` and the run writes `spec-extension-request.json` citing the
+transaction and requirement. Its status is `spec_extension_required`. The host
+must update the base spec and trusted Lean model, replay the trace, recheck
+Lean and regressions, and obtain independent review before advancing the
+shared baseline. The compiler does not accept model-authored Lean source as a
+proof shortcut.
 
 The only automatic repair choices are cumulative claim enforcement and removal
 of the draft one-unit minimum rebate. After those repairs, the two supplied

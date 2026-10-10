@@ -7,6 +7,7 @@
     "evidence_ids",
     "requirement_ids",
     "defect_key",
+    "spec_gap",
     "reasoning",
     "questions"
   ],
@@ -51,6 +52,9 @@
     },
     "defect_key": {
       "type": "string"
+    },
+    "spec_gap": {
+      "type": "boolean"
     },
     "questions": {
       "type": "array",

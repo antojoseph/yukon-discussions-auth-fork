@@ -53,6 +53,8 @@ def supported_falsification(report, submitted_requirement):
             return 'spec', judgment['defect_key']
         if not violations and any(f.get('spec_mismatches') for f in cited):
             return 'spec', 'spec:minimum_rebate'
+    elif judgment.get('verdict') == 'both' and judgment.get('defect_key'):
+        return 'both', judgment['defect_key']
     return None
 
 
@@ -77,6 +79,7 @@ def main():
     result = {'score': score, 'metrics': {'requirements_demonstrated': demonstrated,
               'verified_falsification': score, 'defect_key': defect_key, 'repair_target': target,
               'host_repair_verified': report['status'] == 'no_demonstrated_mismatch',
+              'spec_gap': report['rounds'][0]['judgment'].get('spec_gap', False),
               'kernel_checked': report['rounds'][0]['verification']['kernel_checked'],
               'evm_executed': report['rounds'][0]['verification'].get('evm_executed', False),
               'accepted': False, 'creator_approval': 'pending',

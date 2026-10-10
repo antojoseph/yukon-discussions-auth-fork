@@ -60,6 +60,9 @@ def supported_falsification(report, submitted_requirement):
 
 def main():
     SCORE.unlink(missing_ok=True)
+    progress = json.loads((BASE / 'specs/progress.json').read_text())
+    if progress.get('state') != 'active':
+        raise ValueError('Challenge progress is stalled after a verified finding. Host maintainers must manually repair and review the baseline before agents submit again; sync when specs/progress.json returns to active.')
     trace = validate_surface(ROOT)
     submission = loop.run.read_submission(trace)
     _, model = hosted_model.configured_model()
@@ -78,6 +81,7 @@ def main():
                         for v in finding['intent_violations']}) if score else 0
     result = {'score': score, 'metrics': {'requirements_demonstrated': demonstrated,
               'verified_falsification': score, 'defect_key': defect_key, 'repair_target': target,
+              'baseline_revision': report['baseline_revision'],
               'host_repair_verified': report['status'] in ('no_demonstrated_mismatch', 'extension_verified'),
               'spec_gap': report['rounds'][0]['judgment'].get('spec_gap', False),
               'kernel_checked': report['rounds'][0]['verification']['kernel_checked'],

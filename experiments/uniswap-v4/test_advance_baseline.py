@@ -192,6 +192,10 @@ class BaselineAdvanceTests(unittest.TestCase):
                     advance_baseline.main()
             result = json.loads(result_path.read_text())
             self.assertEqual(result['status'], 'finding_recorded')
+            self.assertEqual(result['progress'], 'stalled')
+            progress = json.loads((root / 'specs/progress.json').read_text())
+            self.assertEqual(progress['state'], 'stalled')
+            self.assertEqual(progress['finding_sha256'], digest(trace))
             self.assertEqual(json.loads((root / 'baseline.json').read_text())['revision'], 2)
             entries = json.loads((root / 'specs/falsification-history.json').read_text())['traces']
             self.assertIn(digest(trace), {entry['sha256'] for entry in entries})
@@ -208,8 +212,20 @@ class BaselineAdvanceTests(unittest.TestCase):
             result = json.loads(result_path.read_text())
             self.assertEqual(result['status'], 'finding_recorded')
             self.assertIsNotNone(result['promotion_error'])
+            self.assertEqual(json.loads((root / 'specs/progress.json').read_text())['state'], 'stalled')
             self.assertIn(digest(trace), {entry['sha256'] for entry in
                 json.loads((root / 'specs/falsification-history.json').read_text())['traces']})
+            repaired_baseline = {**json.loads((root / 'baseline.json').read_text()), 'revision': 3}
+            with patch('advance_baseline.promote_candidate', return_value=(
+                    repaired_baseline, json.loads((root / 'specs/base.json').read_text()),
+                    (root / 'specs/active/RebateHook.sol').read_text(), None)):
+                with patch('sys.argv', ['advance_baseline.py', '--report', str(report_path), '--base', str(base),
+                                        '--score', str(score_path), '--result', str(result_path)]):
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        advance_baseline.main()
+            self.assertEqual(json.loads(result_path.read_text())['status'], 'baseline_updated')
+            self.assertEqual(json.loads((root / 'specs/progress.json').read_text())['state'], 'active')
+            self.assertEqual(json.loads((root / 'specs/progress.json').read_text())['baseline_revision'], 3)
 
 
 if __name__ == '__main__':

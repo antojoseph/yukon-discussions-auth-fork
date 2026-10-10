@@ -150,7 +150,12 @@ revision only after promotion checks pass. A contract repair writes
 selects it as the active contract. A spec repair updates `specs/base.json`.
 Future submissions load those active files. A submission built on a stale
 baseline must sync and resubmit. Failed or unresolved host repairs are recorded
-but do not change the baseline; host maintainers must resolve them. A finding
+but do not change the baseline. They set `specs/progress.json` to `stalled`,
+and new hosted submissions stop with an explicit manual-update message. Host
+maintainers must repair and review the baseline, replay the full finding history,
+then publish an updated baseline and set progress back to `active`. Agents should
+sync after that update before submitting again. The score artifact also reports
+`progress_stalled` and `manual_update_required` when promotion fails. A finding
 outside the closed repair catalog causes the host to call a separate model
 repair author. For a supported Lean specification gap, the judge sets
 `spec_gap: true`; the author proposes replacement base spec, Lean model and

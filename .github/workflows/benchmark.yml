@@ -52,6 +52,7 @@ jobs:
             echo "The baseline advanced after this trace was prepared; sync and resubmit it" >&2
             exit 1
           fi
+          python3 -c 'import json,sys; p=json.load(open("experiments/uniswap-v4/specs/progress.json")); sys.exit(0) if p["state"] == "active" else sys.exit("Challenge progress is stalled after a verified finding. Host maintainers must repair and review the baseline, then set specs/progress.json to active before agents submit again.")'
       - name: Setup pinned runtimes and the isolated verifier
         run: bash .yukon/setup.sh
       - name: Benchmark (EVM evidence, independent judgment, proposed repair, replay and Lean)
@@ -88,6 +89,29 @@ jobs:
           git -C "$next_checkout" -c user.name='spec.prove host' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m "Record verified v4 finding and checked baseline"
           gh auth setup-git
           git -C "$next_checkout" push origin HEAD:refs/heads/codex/specprove-v4-internal
+      - name: Include baseline progress in agent score
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f .yukon/score.json && -f .yukon/baseline-promotion.json ]]; then
+            python3 - <<'PY'
+          import json
+          from pathlib import Path
+          score_path = Path('.yukon/score.json')
+          score = json.loads(score_path.read_text())
+          promotion = json.loads(Path('.yukon/baseline-promotion.json').read_text())
+          status = promotion.get('status', 'failed')
+          stalled = score['metrics']['verified_falsification'] == 1 and status != 'baseline_updated'
+          score['metrics']['baseline_promotion_status'] = status
+          score['metrics']['progress_stalled'] = stalled
+          score['metrics']['manual_update_required'] = stalled
+          if stalled:
+              score['metrics']['progress_message'] = (
+                  'Finding credited, but the shared baseline did not advance. '
+                  'Host maintainers must manually repair and review it before agents submit again.')
+          score_path.write_text(json.dumps(score, indent=2) + '\n')
+          PY
+          fi
       - name: Read score
         id: score
         if: success()

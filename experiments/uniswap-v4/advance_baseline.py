@@ -251,9 +251,18 @@ def main():
             destination = root / updated['lean_source']
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(changed_lean)
+    progress = {'schema_version': 1,
+                'state': 'active' if promotion else 'stalled',
+                'baseline_revision': promotion[0]['revision'] if promotion else baseline['revision'],
+                'finding_sha256': None if promotion else current_hash,
+                'reason': None if promotion else
+                          'A verified finding was recorded, but the host did not promote a checked repair. Manual baseline repair and review are required.'}
+    if score is not None:
+        loop.write(root / 'specs/progress.json', progress)
     result = {'status': 'baseline_updated' if promotion else 'finding_recorded' if recorded else 'no_change',
               'baseline_revision': promotion[0]['revision'] if promotion else baseline['revision'],
-              'trace_sha256': current_hash, 'promotion_error': promotion_error}
+              'trace_sha256': current_hash, 'promotion_error': promotion_error,
+              'progress': progress['state']}
     if args.result:
         loop.write(args.result, result)
     print(json.dumps(result))

@@ -6,6 +6,7 @@ import hashlib
 import html
 import json
 import re
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -181,6 +182,7 @@ def handle_extension(r, state, payload, judgment, folder, args, spec, source, le
             break
         attempt_folder = folder / 'repair-attempts' / str(number)
         attempt_folder.mkdir(parents=True)
+        shutil.copyfile(folder / 'trace.json', attempt_folder / 'trace.json')
         attempt = {'number': number, 'status': 'running'}
         attempts.append(attempt)
         try:

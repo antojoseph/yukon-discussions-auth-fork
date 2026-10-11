@@ -135,6 +135,7 @@ class RepairRoutingTests(unittest.TestCase):
                 patch.object(loop, 'propose_extension', side_effect=propose), \
                 patch.object(loop, 'check_extension', side_effect=check):
             folder = Path(directory)
+            (folder / 'trace.json').write_text('{}')
             report, state = {}, {}
             loop.handle_extension(report, state, {}, self.judge, folder, args,
                                   self.spec, self.source, 'import Std')

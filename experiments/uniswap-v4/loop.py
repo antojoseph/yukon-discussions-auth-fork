@@ -185,6 +185,7 @@ def handle_extension(r, state, payload, judgment, folder, args, spec, source, le
         shutil.copyfile(folder / 'trace.json', attempt_folder / 'trace.json')
         attempt = {'number': number, 'status': 'running'}
         attempts.append(attempt)
+        proposal = None
         try:
             proposal = propose_extension(payload, judgment, attempt_folder, args, lean_source,
                                          feedback, deadline)
@@ -200,11 +201,13 @@ def handle_extension(r, state, payload, judgment, folder, args, spec, source, le
                 r['status'] = state['status'] = 'extension_verified'
                 return
             feedback = {'error': 'Independent review did not resolve every historical trace',
-                        'reviews': reviews}
+                        'reviews': reviews, 'previous_proposal': proposal}
         except (ValueError, RuntimeError, TimeoutError, subprocess.TimeoutExpired) as error:
             attempt['status'] = 'failed'
             attempt['error'] = str(error)
             feedback = {'error': str(error)}
+            if proposal is not None:
+                feedback['previous_proposal'] = proposal
             lean_log = attempt_folder / 'extension-recheck' / 'lean' / 'lean-model.log'
             if lean_log.exists():
                 feedback['lean_compiler_output'] = lean_log.read_text()[-12000:]

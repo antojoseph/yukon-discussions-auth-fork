@@ -142,6 +142,7 @@ class RepairRoutingTests(unittest.TestCase):
             self.assertEqual(report['status'], 'extension_verified')
             self.assertEqual([a['status'] for a in report['repair_attempts']], ['failed', 'verified'])
             self.assertIn('line 79: unsolved goals', feedback_seen[1]['lean_compiler_output'])
+            self.assertEqual(feedback_seen[1]['previous_proposal'], proposal)
             self.assertTrue((folder / 'repair-attempts/1/attempt-result.json').exists())
 
     def test_v2_accounts_for_second_recipient_claim(self):

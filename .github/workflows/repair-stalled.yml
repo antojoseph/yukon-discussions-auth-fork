@@ -1,0 +1,78 @@
+name: spec.prove v4 repair stalled baseline
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: benchmark-specprove-v4-baseline
+  cancel-in-progress: false
+jobs:
+  repair:
+    if: github.ref == 'refs/heads/codex/specprove-v4-internal'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/specprove-v4-internal
+          persist-credentials: false
+      - name: Verify recorded stalled finding
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, 'experiments/uniswap-v4')
+          from execution import digest
+          import run
+          root = Path('experiments/uniswap-v4')
+          progress = json.loads((root / 'specs/progress.json').read_text())
+          matches = [entry for entry in json.loads((root / 'specs/falsification-history.json').read_text())['traces']
+                     if entry['sha256'] == progress.get('finding_sha256')]
+          if progress.get('state') != 'stalled' or len(matches) != 1:
+              raise SystemExit('No single recorded stalled finding to recover')
+          trace = run.read_submission(root / matches[0]['trace'])
+          if digest(trace) != progress['finding_sha256']:
+              raise SystemExit('Stalled trace digest changed')
+          Path('/tmp/specprove-stalled-trace-path').write_text(str(root / matches[0]['trace']))
+          PY
+      - name: Setup pinned verifier
+        run: bash .yukon/setup.sh
+      - name: Retry host repair and independent review
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.SPEC_PROVE_OPENROUTER_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          trace_path="$(cat /tmp/specprove-stalled-trace-path)"
+          output_path="runs/reproduced-v4-stalled-repair-$(date -u +%Y%m%dT%H%M%SZ)"
+          printf '%s' "$output_path" > /tmp/specprove-stalled-output-path
+          python3 experiments/uniswap-v4/loop.py --provider openrouter --trace "$trace_path" --rounds 2 --output "$output_path" --repair-deadline-seconds 1800 --repair-attempts 10
+      - name: Replay and promote checked baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          output_path="$(cat /tmp/specprove-stalled-output-path)"
+          python3 experiments/uniswap-v4/advance_baseline.py --resume-stalled --report "$output_path/report.json" --base . --result "$output_path/promotion.json"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          output = Path('/tmp/specprove-stalled-output-path').read_text()
+          result = json.loads((Path(output) / 'promotion.json').read_text())
+          if result['status'] != 'baseline_updated' or result['progress'] != 'active':
+              raise SystemExit('Checked baseline was not promoted')
+          PY
+          git add -- experiments/uniswap-v4
+          git -c user.name='spec.prove host' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Repair stalled v4 baseline after full replay'
+          gh auth setup-git
+          git push origin HEAD:refs/heads/codex/specprove-v4-internal
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Upload repair evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stalled-repair-evidence
+          path: runs/reproduced-v4-stalled-repair-*/
+          if-no-files-found: warn

@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import re
 import tempfile
+import time
 
 import run
 from execution import compare, digest, execute, runtime_env
@@ -42,7 +43,7 @@ def parse_proposal(proposal, current_spec, current_source, current_lean, verdict
     return spec, proposal['contract_source'], proposal['lean_source']
 
 
-def check_lean(source, out):
+def check_lean(source, out, deadline=None):
     """Kernel-check the candidate model and audit its required theorem axioms."""
     out = out.resolve()
     if FORBIDDEN_LEAN.search(source) or re.search(r'^\s*import\s+(?!Std\s*$)', source, re.M):
@@ -57,12 +58,19 @@ def check_lean(source, out):
         # Do not pass the hosted judge credential or GitHub token to model-authored Lean.
         env = {'HOME': home, 'PATH': os.path.dirname(lean) + os.pathsep + '/usr/bin:/bin',
                'LEAN_PATH': str(out)}
+        def command_timeout():
+            if deadline is None:
+                return 120
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('Repair time budget exhausted during Lean check')
+            return min(120, remaining)
         code, model_log = run.command([lean, '-o', out / 'Rebate.olean', out / 'Rebate.lean'],
-                                      cwd=out, env=env, timeout=120)
+                                      cwd=out, env=env, timeout=command_timeout())
         (out / 'lean-model.log').write_text(model_log)
         if code:
             raise ValueError('Candidate Lean model failed to compile')
-        code, audit_log = run.command([lean, out / 'Audit.lean'], cwd=out, env=env, timeout=120)
+        code, audit_log = run.command([lean, out / 'Audit.lean'], cwd=out, env=env, timeout=command_timeout())
         (out / 'lean-axioms.log').write_text(audit_log)
         if code:
             raise ValueError('Candidate Lean theorem audit failed')
@@ -71,21 +79,23 @@ def check_lean(source, out):
             'trace_kernel_checked': False, 'contract_correspondence': 'not_proved'}
 
 
-def replay_candidate(root, current_trace, history, spec, source, lean_source, out):
+def replay_candidate(root, current_trace, history, spec, source, lean_source, out, deadline=None):
     """Replay every historical finding and this submission on the exact candidate."""
     import advance_baseline
     traces = advance_baseline.checked_traces(root, current_trace, history, current_is_trace=True)
     out.mkdir(parents=True, exist_ok=False)
-    formal = check_lean(lean_source, out / 'lean')
+    formal = check_lean(lean_source, out / 'lean', deadline)
     cases = []
     for index, (label, trace) in enumerate(traces):
         observed = execute(trace, True, source, out / str(index) / 'execution',
-                           patched=True, run_regressions=index == 0)
+                           patched=True, run_regressions=index == 0, deadline=deadline)
         comparison = compare(spec, observed)
+        (out / str(index) / 'comparison.json').write_text(json.dumps(comparison, indent=2) + '\n')
         if index == 0 and observed['regressions_passed'] != 10:
             raise ValueError('Candidate did not pass all Solidity regressions')
-        if any(f['intent_violations'] or f.get('execution_anomalies') for f in comparison['findings']):
-            raise ValueError('Candidate still violates a checked intent invariant: ' + label)
+        if comparison['findings']:
+            raise ValueError('Candidate still has a demonstrated mismatch: ' + label +
+                             '; findings=' + json.dumps(comparison['findings'])[:8000])
         cases.append({'label': label, 'trace_sha256': digest(trace), 'trace': trace,
                       'execution': observed, 'comparison': comparison,
                       'trace_kernel_checked': False})

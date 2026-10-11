@@ -76,8 +76,16 @@ jobs:
           git fetch --no-tags origin codex/specprove-v4-internal
           base_sha="$(git rev-parse FETCH_HEAD)"
           if [[ "$base_sha" != "$(git rev-parse "$GITHUB_SHA^")" ]]; then
-            echo "Baseline moved during verification; do not apply a stale repair" >&2
-            exit 1
+            if ! git diff --quiet "$GITHUB_SHA^" "$base_sha" -- \
+              experiments/uniswap-v4/baseline.json \
+              experiments/uniswap-v4/specs/base.json \
+              experiments/uniswap-v4/specs/active/RebateHook.sol \
+              experiments/uniswap-v4/specs/active/Rebate.lean \
+              experiments/uniswap-v4/intent.json \
+              experiments/uniswap-v4/specs/falsification-history.json; then
+              echo "Semantic baseline moved during verification; do not apply a stale repair" >&2
+              exit 1
+            fi
           fi
           next_checkout="$(mktemp -d)"
           git worktree add --detach "$next_checkout" "$base_sha"

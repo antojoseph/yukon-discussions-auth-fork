@@ -39,6 +39,8 @@ def instrumented_source(submission, fixed):
         for field in ('collected', 'earned', 'paid', 'claimed'):
             extra = ', address(this)' if field in ('earned', 'claimed') else ''
             observe.append(f'emit log_named_uint("{pool}_{field}", hook.{field}(pool{pool}.toId(), currency1{extra}));')
+        for field in ('earned', 'claimed'):
+            observe.append(f'emit log_named_uint("{pool}_bob_{field}", hook.{field}(pool{pool}.toId(), currency1, BOB));')
     observe += ['emit log_named_uint("custody", currency1.balanceOf(address(hook)));',
                 'emit log_named_uint("recipient_balance", currency1.balanceOf(address(this)));',
                 'emit log_named_address("caller", address(this));',
@@ -51,7 +53,7 @@ def runtime_env():
     return run.runtime_env()
 
 
-def execute(submission, fixed, source, out, patched=False, run_regressions=True):
+def execute(submission, fixed, source, out, patched=False, run_regressions=True, deadline=None):
     """Compile the exact recorded source in an isolated fixture and inspect actual calls."""
     out.mkdir(parents=True, exist_ok=False)
     run.verify_dependencies()
@@ -70,7 +72,15 @@ def execute(submission, fixed, source, out, patched=False, run_regressions=True)
         args = [env.get('V4_FORGE', 'forge'), 'test', '--root', root, '--json', '-vv']
         if env.get('V4_SOLC'):
             args += ['--use', env['V4_SOLC'], '--offline']
-        code, raw = run.command(args + ['--match-contract', '^TransactionReplay$', '--match-test', r'^testTransactionReplay\(\)$'], cwd=root, env=env)
+        import time
+        def command_timeout():
+            if deadline is None:
+                return 300
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('Repair time budget exhausted during EVM replay')
+            return min(300, remaining)
+        code, raw = run.command(args + ['--match-contract', '^TransactionReplay$', '--match-test', r'^testTransactionReplay\(\)$'], cwd=root, env=env, timeout=command_timeout())
         (out / 'forge-transactions.json').write_text(raw)
         if code:
             raise ValueError('Concrete execution failed; inspect forge-transactions.json')
@@ -83,7 +93,7 @@ def execute(submission, fixed, source, out, patched=False, run_regressions=True)
             # The historical seeded-attack test asserts the bug. All ten behavior
             # regressions must instead pass against the exact proposed source.
             code, raw = run.command(args + ['--match-contract', '^RebateHookTest$',
-                '--no-match-test', r'^testSeededAttackDrainsOtherPoolReserve\(\)$'], cwd=root, env=env)
+                '--no-match-test', r'^testSeededAttackDrainsOtherPoolReserve\(\)$'], cwd=root, env=env, timeout=command_timeout())
             (out / 'forge-patch-regressions.json').write_text(raw)
             if code:
                 raise ValueError('Proposed contract failed regressions')
@@ -91,7 +101,8 @@ def execute(submission, fixed, source, out, patched=False, run_regressions=True)
             if regression_count != 10:
                 raise ValueError('Expected all ten contract behavior regressions')
     iterator = iter(logs)
-    fields = [p + '_' + f for p in ('A', 'B') for f in ('collected', 'earned', 'paid', 'claimed')]
+    fields = [p + '_' + f for p in ('A', 'B') for f in ('collected', 'earned', 'paid', 'claimed',
+                                                      'bob_earned', 'bob_claimed')]
     fields += ['custody', 'recipient_balance', 'caller', 'target', 'timestamp']
     def take(key):
         try:
@@ -121,7 +132,7 @@ def execute(submission, fixed, source, out, patched=False, run_regressions=True)
         anomalies = []
         if not success and after != previous:
             anomalies.append('rejected_call_changed_state')
-        if any(after[p + '_claimed'] != after[p + '_paid'] for p in ('A', 'B')):
+        if any(after[p + '_claimed'] + after[p + '_bob_claimed'] != after[p + '_paid'] for p in ('A', 'B')):
             anomalies.append('claim_accounting_differs_from_payout')
         if action['op'] == 'claim' and success and after['recipient_balance'] - previous['recipient_balance'] != action['amount']:
             anomalies.append('successful_claim_paid_unexpected_amount')
@@ -140,7 +151,10 @@ def execute(submission, fixed, source, out, patched=False, run_regressions=True)
 
 def compare(spec, observed):
     """Compare spec predictions and intent requirements to actual per-step state."""
-    accounts = {p: dict(collected=0, earned=0, paid=0) for p in ('A', 'B')}
+    recipient_scoped = spec.get('schema_version') == 2
+    accounts = {p: dict(collected=0, earned=0, paid=0,
+                        **({'claimed': 0, 'bob_earned': 0, 'bob_claimed': 0} if recipient_scoped else {}))
+                for p in ('A', 'B')}
     custody = 0
     differences = []
     predictions = []
@@ -149,11 +163,13 @@ def compare(spec, observed):
         if a['op'] == 'call':
             after = tx['after']
             for pool in ('A', 'B'):
-                for field in ('collected', 'earned', 'paid'):
+                for field in accounts[pool]:
                     accounts[pool][field] = after[pool + '_' + field]
             custody = after['custody']
             violations = []
-            if any(after[pool + '_paid'] > after[pool + '_earned'] for pool in ('A', 'B')):
+            if any((after[pool + '_claimed'] > after[pool + '_earned'] or
+                    after[pool + '_bob_claimed'] > after[pool + '_bob_earned']) if recipient_scoped else
+                   after[pool + '_paid'] > after[pool + '_earned'] for pool in ('A', 'B')):
                 violations.append('R2')
             if any(after[pool + '_paid'] > after[pool + '_collected'] for pool in ('A', 'B')):
                 violations.append('R3')
@@ -170,10 +186,13 @@ def compare(spec, observed):
             custody += fee
             allowed = True
         else:
-            owed = state['earned'] - state['paid'] if spec['claim_limit'] == 'cumulative' else state['earned']
-            allowed = amount <= owed and amount <= custody
+            owed = state['earned'] - (state['claimed'] if recipient_scoped else state['paid']) if spec['claim_limit'] == 'cumulative' else state['earned']
+            allowed = amount <= owed and amount <= custody and (
+                not recipient_scoped or amount <= state['collected'] - state['paid'])
             if allowed:
                 state['paid'] += amount; custody -= amount
+                if recipient_scoped:
+                    state['claimed'] += amount
         mismatches = []
         after = tx['after']
         if tx['succeeded'] != allowed:
@@ -185,7 +204,9 @@ def compare(spec, observed):
         if after['custody'] != custody:
             mismatches.append('custody')
         violations = []
-        if any(after[pool + '_paid'] > after[pool + '_earned'] for pool in ('A', 'B')):
+        if any((after[pool + '_claimed'] > after[pool + '_earned'] or
+                after[pool + '_bob_claimed'] > after[pool + '_bob_earned']) if recipient_scoped else
+               after[pool + '_paid'] > after[pool + '_earned'] for pool in ('A', 'B')):
             violations.append('R2')
         if any(after[pool + '_paid'] > after[pool + '_collected'] for pool in ('A', 'B')):
             violations.append('R3')

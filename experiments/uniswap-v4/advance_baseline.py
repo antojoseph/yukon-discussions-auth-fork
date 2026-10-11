@@ -28,7 +28,8 @@ def checked_traces(root, report_path, history, current_is_trace=False):
         traces.append((entry['trace'], trace))
     current_path = report_path if current_is_trace else report_path.parent / 'round-1/trace.json'
     current = loop.run.read_submission(current_path)
-    traces.append(('new-submission', current))
+    if digest(current) not in {digest(trace) for _, trace in traces}:
+        traces.append(('new-submission', current))
     return traces
 
 
@@ -203,6 +204,7 @@ def main():
     parser.add_argument('--base', type=Path, required=True, help='Checked-out current benchmark branch')
     parser.add_argument('--score', type=Path, help='Authoritative score for recording a credited trace')
     parser.add_argument('--result', type=Path, help='Write promotion outcome JSON')
+    parser.add_argument('--resume-stalled', action='store_true', help='Promote the recorded stalled finding after fresh hosted replay and review')
     args = parser.parse_args()
     root = args.base.resolve() / 'experiments/uniswap-v4'
     baseline = json.loads((root / 'baseline.json').read_text())
@@ -213,6 +215,15 @@ def main():
     history = json.loads(history_path.read_text())
     trace_path = args.report.resolve().parent / 'round-1/trace.json'
     current_trace = loop.run.read_submission(trace_path)
+    if args.resume_stalled:
+        if score is not None:
+            raise ValueError('Stalled recovery cannot also score a new submission')
+        progress = json.loads((root / 'specs/progress.json').read_text())
+        if (progress.get('state') != 'stalled' or progress.get('baseline_revision') != baseline['revision'] or
+                progress.get('finding_sha256') != digest(current_trace)):
+            raise ValueError('Recovery report does not match the stalled finding')
+        if report.get('status') != 'extension_verified':
+            raise ValueError('Stalled finding has no fully checked and reviewed repair')
     score = json.loads(args.score.read_text()) if args.score else None
     should_promote = verified_credit(score, report, current_trace) if score else report.get('status') in (
         'no_demonstrated_mismatch', 'extension_verified')
@@ -257,7 +268,7 @@ def main():
                 'finding_sha256': None if promotion else current_hash,
                 'reason': None if promotion else
                           'A verified finding was recorded, but the host did not promote a checked repair. Manual baseline repair and review are required.'}
-    if score is not None:
+    if score is not None or args.resume_stalled:
         loop.write(root / 'specs/progress.json', progress)
     result = {'status': 'baseline_updated' if promotion else 'finding_recorded' if recorded else 'no_change',
               'baseline_revision': promotion[0]['revision'] if promotion else baseline['revision'],

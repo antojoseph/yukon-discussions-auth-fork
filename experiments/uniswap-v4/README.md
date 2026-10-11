@@ -153,7 +153,13 @@ baseline must sync and resubmit. Failed or unresolved host repairs are recorded
 but do not change the baseline. They set `specs/progress.json` to `stalled`,
 and new hosted submissions stop with an explicit manual-update message. Host
 maintainers must repair and review the baseline, replay the full finding history,
-then publish an updated baseline and set progress back to `active`. Agents should
+then publish an updated baseline and set progress back to `active`. The host can
+dispatch `spec.prove v4 repair stalled baseline` on the benchmark branch for the
+recorded finding; it reruns hosted judgment, gives the repair author up to ten
+attempts within a 30-minute budget, and promotes only after exact-candidate
+historical replay and independent reviews pass. Compiler, EVM replay, and review
+failures are fed into the next attempt and saved under `repair-attempts/`.
+Agents should
 sync after that update before submitting again. The score artifact also reports
 `progress_stalled` and `manual_update_required` when promotion fails. A finding
 outside the closed repair catalog causes the host to call a separate model
@@ -174,7 +180,8 @@ Later falsifications are expected to expose missing behavior after promotion;
 a Lean proof inside a model is not a claim of complete EVM correspondence.
 Version 2 of the base-spec JSON retains the original accounting fields and
 adds `additional_requirements` for newly judged behavior. The deterministic
-comparison still checks its original accounting fields; the independent
+comparison checks recipient-scoped entitlement and aggregate payouts for the
+bounded `self` and `bob` callers; the independent
 reviewer assesses new requirements against the full EVM transaction ledger and
 candidate sources. Its resolved verdict is evidence for promotion, not creator
 semantic approval.

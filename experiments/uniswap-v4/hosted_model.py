@@ -18,7 +18,7 @@ def configured_model():
     return key, MODEL
 
 
-def invoke(role, payload, out, timeout=240):
+def invoke(role, payload, out, timeout=240, deadline=None):
     if role not in ROLES:
         raise ValueError('Unknown semantic role')
     key, model = configured_model()
@@ -42,8 +42,11 @@ def invoke(role, payload, out, timeout=240):
     req = request.Request('https://openrouter.ai/api/v1/chat/completions', data=encoded,
                           headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'}, method='POST')
     for attempt in range(3):
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError('Repair time budget exhausted')
         try:
-            with request.urlopen(req, timeout=timeout) as response:
+            request_timeout = min(timeout, max(1, deadline - time.monotonic())) if deadline is not None else timeout
+            with request.urlopen(req, timeout=request_timeout) as response:
                 result = json.load(response)
             break
         except error.HTTPError as exc:
@@ -51,11 +54,11 @@ def invoke(role, payload, out, timeout=240):
             failure = 'HTTP ' + str(exc.code)
             if exc.code not in (429, 500, 502, 503, 504) or attempt == 2:
                 raise RuntimeError('Hosted model request failed: ' + failure) from None
-            time.sleep(2 ** attempt)
+            time.sleep(min(2 ** attempt, max(0, deadline - time.monotonic())) if deadline is not None else 2 ** attempt)
         except (error.URLError, TimeoutError) as exc:
             if attempt == 2:
                 raise RuntimeError('Hosted model request failed: ' + type(exc).__name__) from None
-            time.sleep(2 ** attempt)
+            time.sleep(min(2 ** attempt, max(0, deadline - time.monotonic())) if deadline is not None else 2 ** attempt)
     choices = result.get('choices', [])
     if len(choices) != 1 or choices[0].get('finish_reason') != 'stop':
         raise RuntimeError('Hosted model response did not complete')

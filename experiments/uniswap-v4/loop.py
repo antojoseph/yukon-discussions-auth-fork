@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 
 import run
@@ -117,17 +118,21 @@ def validate_repair(proposal, judgment, spec, contract):
     return proposal
 
 
-def agent(role, payload, out, args):
+def agent(role, payload, out, args, deadline=None):
+    timeout = args.timeout if deadline is None else min(args.timeout, max(1, int(deadline - time.monotonic())))
+    if deadline is not None and time.monotonic() >= deadline:
+        raise TimeoutError('Repair time budget exhausted')
     if args.provider == 'openrouter':
-        return hosted_model.invoke(role, payload, out, args.timeout)
-    return invoke_agent(role, payload, out, args.timeout, model=args.model,
+        return hosted_model.invoke(role, payload, out, timeout, deadline=deadline)
+    return invoke_agent(role, payload, out, timeout, model=args.model,
                         instruction_root=run.BASE, schema_name=role + '.json')
 
 
-def propose_extension(payload, judgment, folder, args, lean_source):
-    extension = agent('repair_extension', {**payload, 'judgment': judgment,
-        'current_lean_model': lean_source},
-        folder / 'spec-extension-proposer', args)
+def propose_extension(payload, judgment, folder, args, lean_source, retry_feedback=None, deadline=None):
+    request = {**payload, 'judgment': judgment, 'current_lean_model': lean_source}
+    if retry_feedback:
+        request['retry_feedback'] = retry_feedback
+    extension = agent('repair_extension', request, folder / 'spec-extension-proposer', args, deadline)
     if (not isinstance(extension, dict) or set(extension) !=
             {'schema_version', 'specification', 'lean_source', 'contract_source', 'reasoning'} or
             extension['schema_version'] != 1 or
@@ -138,7 +143,7 @@ def propose_extension(payload, judgment, folder, args, lean_source):
     return extension
 
 
-def check_extension(payload, judgment, proposal, folder, args, spec, source, lean_source):
+def check_extension(payload, judgment, proposal, folder, args, spec, source, lean_source, deadline=None):
     candidate_spec, candidate_source, candidate_lean = extension.parse_proposal(
         proposal, spec, source, lean_source, judgment['verdict'], judgment.get('spec_gap', False))
     write(folder / 'proposed-spec.json', candidate_spec)
@@ -147,7 +152,7 @@ def check_extension(payload, judgment, proposal, folder, args, spec, source, lea
     history = read(run.BASE / 'specs/falsification-history.json')
     checks = extension.replay_candidate(run.BASE, folder / 'trace.json', history,
                                         candidate_spec, candidate_source, candidate_lean,
-                                        folder / 'extension-recheck')
+                                        folder / 'extension-recheck', deadline)
     reviews = []
     for index, case in enumerate(checks['cases']):
         case_checks = {**checks, 'cases': [case]}
@@ -160,26 +165,56 @@ def check_extension(payload, judgment, proposal, folder, args, spec, source, lea
                           'reviewed_trace_sha256': [case['trace_sha256']],
                           'formal_scope': 'Lean checked candidate model theorems, not EVM correspondence or raw-call witnesses.'}
         review = agent('review_extension', review_payload,
-                       folder / ('extension-reviewer-' + str(index)), args)
+                       folder / ('extension-reviewer-' + str(index)), args, deadline)
         reviews.append(extension.validate_review(review, case_checks))
     write(folder / 'extension-reviews.json', reviews)
     return checks, reviews
 
 
 def handle_extension(r, state, payload, judgment, folder, args, spec, source, lean_source):
-    proposal = propose_extension(payload, judgment, folder, args, lean_source)
-    r['spec_extension_proposal'] = proposal
-    try:
-        checks, reviews = check_extension(payload, judgment, proposal, folder, args,
-                                         spec, source, lean_source)
-    except ValueError as error:
-        r['extension_error'] = str(error)
-        r['status'] = state['status'] = 'repair_failed_replay'
-        return
-    r['extension_recheck'] = checks
-    r['extension_reviews'] = reviews
-    r['status'] = state['status'] = ('extension_verified' if all(x['verdict'] == 'resolved' for x in reviews)
-                                    else 'extension_rejected_by_review')
+    deadline = time.monotonic() + args.repair_deadline_seconds
+    attempts = []
+    r['repair_attempts'] = attempts
+    feedback = None
+    for number in range(1, args.repair_attempts + 1):
+        if time.monotonic() >= deadline:
+            break
+        attempt_folder = folder / 'repair-attempts' / str(number)
+        attempt_folder.mkdir(parents=True)
+        attempt = {'number': number, 'status': 'running'}
+        attempts.append(attempt)
+        try:
+            proposal = propose_extension(payload, judgment, attempt_folder, args, lean_source,
+                                         feedback, deadline)
+            attempt['candidate_sha256'] = digest(proposal)
+            checks, reviews = check_extension(payload, judgment, proposal, attempt_folder, args,
+                                             spec, source, lean_source, deadline)
+            attempt['status'] = 'verified' if all(x['verdict'] == 'resolved' for x in reviews) else 'rejected_by_review'
+            if attempt['status'] == 'verified':
+                write(attempt_folder / 'attempt-result.json', attempt)
+                r['spec_extension_proposal'] = proposal
+                r['extension_recheck'] = checks
+                r['extension_reviews'] = reviews
+                r['status'] = state['status'] = 'extension_verified'
+                return
+            feedback = {'error': 'Independent review did not resolve every historical trace',
+                        'reviews': reviews}
+        except (ValueError, RuntimeError, TimeoutError, subprocess.TimeoutExpired) as error:
+            attempt['status'] = 'failed'
+            attempt['error'] = str(error)
+            feedback = {'error': str(error)}
+            lean_log = attempt_folder / 'extension-recheck' / 'lean' / 'lean-model.log'
+            if lean_log.exists():
+                feedback['lean_compiler_output'] = lean_log.read_text()[-12000:]
+            for candidate in attempt_folder.glob('extension-recheck/*/execution/forge-transactions.json'):
+                feedback['evm_replay_output'] = candidate.read_text()[-12000:]
+                break
+        attempt['feedback'] = feedback
+        write(attempt_folder / 'attempt-result.json', attempt)
+        print(f'Repair attempt {number}/{args.repair_attempts}: {attempt["status"]}', flush=True)
+    r['extension_error'] = feedback['error'] if feedback else 'Repair time budget exhausted'
+    r['repair_budget_seconds'] = args.repair_deadline_seconds
+    r['status'] = state['status'] = 'repair_failed_replay'
 
 
 def proof(submission_path, out):
@@ -246,8 +281,12 @@ def main():
     parser.add_argument('--model')
     parser.add_argument('--provider', choices=['codex', 'openrouter'], default='codex')
     parser.add_argument('--timeout', type=int, default=240)
+    parser.add_argument('--repair-deadline-seconds', type=int, default=1800)
+    parser.add_argument('--repair-attempts', type=int, default=10)
     parser.add_argument('--output', type=Path, default=run.ROOT / 'runs' / ('reproduced-v4-loop-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')))
     args = parser.parse_args()
+    if not 1 <= args.repair_deadline_seconds <= 3600 or not 1 <= args.repair_attempts <= 30:
+        raise ValueError('Repair deadline or attempt count is out of range')
     baseline = read(run.BASE / 'baseline.json')
     baseline_fields = {'schema_version', 'revision', 'contract', 'contract_source'}
     if (not isinstance(baseline, dict) or set(baseline) not in

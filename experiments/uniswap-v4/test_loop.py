@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
 import loop
 import extension
 from execution import compare, patch_contract
@@ -109,6 +111,46 @@ class RepairRoutingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'unapproved'):
                 extension.check_lean(lean_source + '\naxiom fabricated : False\n',
                                      Path(directory) / 'unsafe')
+
+    def test_extension_retry_uses_compiler_feedback_and_keeps_attempts(self):
+        args = SimpleNamespace(repair_deadline_seconds=1800, repair_attempts=3)
+        proposal = {'schema_version': 1, 'specification': '{}', 'lean_source': 'import Std',
+                    'contract_source': self.source, 'reasoning': 'candidate'}
+        checks = {'candidate_sha256': 'candidate', 'cases': []}
+        feedback_seen = []
+
+        def propose(payload, judgment, folder, options, lean_source, feedback, deadline):
+            feedback_seen.append(feedback)
+            return proposal
+
+        def check(payload, judgment, candidate, folder, options, spec, source, lean_source, deadline):
+            if folder.name == '1':
+                log = folder / 'extension-recheck/lean/lean-model.log'
+                log.parent.mkdir(parents=True)
+                log.write_text('line 79: unsolved goals')
+                raise ValueError('Candidate Lean model failed to compile')
+            return checks, [{'verdict': 'resolved'}]
+
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(loop, 'propose_extension', side_effect=propose), \
+                patch.object(loop, 'check_extension', side_effect=check):
+            folder = Path(directory)
+            report, state = {}, {}
+            loop.handle_extension(report, state, {}, self.judge, folder, args,
+                                  self.spec, self.source, 'import Std')
+            self.assertEqual(report['status'], 'extension_verified')
+            self.assertEqual([a['status'] for a in report['repair_attempts']], ['failed', 'verified'])
+            self.assertIn('line 79: unsolved goals', feedback_seen[1]['lean_compiler_output'])
+            self.assertTrue((folder / 'repair-attempts/1/attempt-result.json').exists())
+
+    def test_v2_accounts_for_second_recipient_claim(self):
+        spec = {**self.spec, 'schema_version': 2, 'additional_requirements': ['Claims are per recipient.']}
+        observed = {'transactions': [{'id': 'tx-1', 'action': {'op': 'call', 'target': 'hook', 'caller': 'bob'},
+            'succeeded': True, 'after': {'A_collected': 200, 'A_earned': 50, 'A_claimed': 0,
+            'A_bob_earned': 100, 'A_bob_claimed': 100, 'A_paid': 100,
+            'B_collected': 0, 'B_earned': 0, 'B_claimed': 0, 'B_bob_earned': 0,
+            'B_bob_claimed': 0, 'B_paid': 0, 'custody': 100}, 'anomalies': []}]}
+        self.assertEqual(compare(spec, observed)['findings'], [])
 
 
 if __name__ == '__main__':

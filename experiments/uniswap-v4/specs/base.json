@@ -1,6 +1,19 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "family": "uniswap-v4-rebate-v1",
   "claim_limit": "cumulative",
-  "minimum_rebate": 0
+  "minimum_rebate": 0,
+  "additional_requirements": [
+    "For every supported exact-input swap, collect floor(gross output / 100) units of the output ERC20 and credit floor(fee / 2) to the payer identified by the dedicated router; round separately for each swap.",
+    "Maintain cumulative earned and claimed amounts independently for every (pool, currency, recipient). Test a claim against the caller's earned minus claimed amount, never against pool-wide paid or another recipient's entitlement.",
+    "Maintain collected fees and cumulative payments at (pool, currency) scope. Every successful claim increases the caller's claimed amount and the pool's paid amount by exactly the transferred amount, without changing other recipients' ledgers.",
+    "Reject zero claims, claims exceeding the caller's remaining entitlement, and claims exceeding the pool's collected minus paid reserve. Do not reject an otherwise valid claim merely because pool-wide paid exceeds one recipient's earned amount.",
+    "No pool's cumulative payments may exceed its collected fees. Claims must preserve reserves owed to other pools sharing the same token custody.",
+    "Only PoolManager may invoke the active hook callback, and only the dedicated router may identify the swap payer. Claims debit only msg.sender's entitlement.",
+    "Rejected claims change no balances or accounting. Failed token transfers atomically roll back claim accounting and balances.",
+    "Replay must preserve recipient identities, including callers of decoded raw router and hook calls. Attribute each successful swap's actual fee and rebate to its authenticated payer and each successful claim to its caller, pool and currency. Never compare pool-wide paid with a single recipient's earned as an R2 check.",
+    "Funding transfers and approvals do not themselves earn rebates or change hook accounting. Unrecognized raw calls must remain explicitly unmodeled rather than being assigned invented accounting effects.",
+    "The supported environment remains initialized local pools, exact-input ERC20 swaps, exact-transfer non-rebasing tokens without callbacks, actual output deltas supplied by PoolManager, and a dedicated local router without slippage protection. Native currency, exact-output swaps, admin withdrawals and upgrades remain outside scope. Remaining fees are retained by the hook.",
+    "The Lean abstraction models two pools, one currency, arbitrary recipient identifiers and nonnegative unbounded integers. Collection fees are replay inputs; authenticated actions and transaction outcomes are abstract inputs. It does not model AMM math, EVM arithmetic, token execution or arbitrary calldata, and does not establish EVM correspondence or creator approval."
+  ]
 }

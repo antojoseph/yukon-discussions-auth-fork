@@ -19,7 +19,8 @@ class BaselineAdvanceTests(unittest.TestCase):
         self.base = loop.run.BASE
         self.baseline = {'schema_version': 1, 'revision': 0, 'contract': 'seeded',
                          'contract_source': 'src/RebateHook.sol'}
-        self.spec = {**json.loads((self.base / 'specs/base.json').read_text()), 'minimum_rebate': 1}
+        self.spec = {'schema_version': 1, 'family': 'uniswap-v4-rebate-v1',
+                     'claim_limit': 'cumulative', 'minimum_rebate': 1}
         self.source = (self.base / 'src/RebateHook.sol').read_text()
         self.intent_hash = digest(json.loads((self.base / 'intent.json').read_text()))
 
@@ -94,9 +95,10 @@ class BaselineAdvanceTests(unittest.TestCase):
         baseline = json.loads((root / 'baseline.json').read_text())
         spec = json.loads((root / 'specs/base.json').read_text())
         source = (root / baseline['contract_source']).read_text()
-        lean_source = (root / 'lean/Rebate.lean').read_text()
+        lean_source = (root / baseline.get('lean_source', 'lean/Rebate.lean')).read_text()
         revised_spec = {**spec, 'schema_version': 2,
-                        'additional_requirements': ['A caller-sensitive raw action has defined behavior.']}
+                        'additional_requirements': spec.get('additional_requirements', []) +
+                        ['A caller-sensitive raw action has defined behavior.']}
         revised_lean = lean_source + '\n-- Proposed additional coverage.\n'
         proposal = {'schema_version': 1, 'specification': json.dumps(revised_spec),
                     'contract_source': source, 'lean_source': revised_lean,
@@ -111,13 +113,16 @@ class BaselineAdvanceTests(unittest.TestCase):
                     'requirement_ids': ['R4'], 'defect_key': 'spec:caller_sensitive_rule',
                     'spec_gap': True, 'reasoning': 'The model omits caller-sensitive behavior.',
                     'questions': []}
+        version_inputs = dict(spec=spec, contract=baseline['contract'], source=source,
+                              intent_sha256=self.intent_hash)
+        if baseline.get('lean_source'):
+            version_inputs['lean_source'] = lean_source
         report = {'status': 'extension_verified', 'baseline_revision': baseline['revision'],
                   'accepted': False, 'creator_approval': 'pending',
                   'contract_correspondence': 'not_proved',
                   'judge_mode': 'hosted_openrouter_tool_free_roles',
                   'intent_sha256': self.intent_hash,
-                  'rounds': [{'version': digest(dict(spec=spec, contract=baseline['contract'],
-                                                     source=source, intent_sha256=self.intent_hash)),
+                  'rounds': [{'version': digest(version_inputs),
                               'spec': spec, 'contract': baseline['contract'], 'status': 'extension_verified',
                               'verification': {'evm_executed': True},
                               'execution': {'source_sha256': hashlib.sha256(source.encode()).hexdigest(),
@@ -153,6 +158,7 @@ class BaselineAdvanceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
             root = base / 'experiments/uniswap-v4'
+            initial_revision = json.loads((self.base / 'baseline.json').read_text())['revision']
             (root / 'specs/active').mkdir(parents=True)
             shutil.copytree(self.base / 'fixtures', root / 'fixtures')
             for name in ('baseline.json',):
@@ -196,7 +202,7 @@ class BaselineAdvanceTests(unittest.TestCase):
             progress = json.loads((root / 'specs/progress.json').read_text())
             self.assertEqual(progress['state'], 'stalled')
             self.assertEqual(progress['finding_sha256'], digest(trace))
-            self.assertEqual(json.loads((root / 'baseline.json').read_text())['revision'], 2)
+            self.assertEqual(json.loads((root / 'baseline.json').read_text())['revision'], initial_revision)
             entries = json.loads((root / 'specs/falsification-history.json').read_text())['traces']
             self.assertIn(digest(trace), {entry['sha256'] for entry in entries})
             (root / 'specs/falsification-history.json').write_text(original_history)
@@ -215,7 +221,8 @@ class BaselineAdvanceTests(unittest.TestCase):
             self.assertEqual(json.loads((root / 'specs/progress.json').read_text())['state'], 'stalled')
             self.assertIn(digest(trace), {entry['sha256'] for entry in
                 json.loads((root / 'specs/falsification-history.json').read_text())['traces']})
-            repaired_baseline = {**json.loads((root / 'baseline.json').read_text()), 'revision': 3}
+            repaired_baseline = {**json.loads((root / 'baseline.json').read_text()),
+                                 'revision': initial_revision + 1}
             with patch('advance_baseline.promote_candidate', return_value=(
                     repaired_baseline, json.loads((root / 'specs/base.json').read_text()),
                     (root / 'specs/active/RebateHook.sol').read_text(), None)):
@@ -225,7 +232,8 @@ class BaselineAdvanceTests(unittest.TestCase):
                         advance_baseline.main()
             self.assertEqual(json.loads(result_path.read_text())['status'], 'baseline_updated')
             self.assertEqual(json.loads((root / 'specs/progress.json').read_text())['state'], 'active')
-            self.assertEqual(json.loads((root / 'specs/progress.json').read_text())['baseline_revision'], 3)
+            self.assertEqual(json.loads((root / 'specs/progress.json').read_text())['baseline_revision'],
+                             initial_revision + 1)
 
 
 if __name__ == '__main__':

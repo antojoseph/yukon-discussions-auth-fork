@@ -216,6 +216,6 @@ check. Never put credentials in a trace or public note.
 
 ## Evidence and limits
 
-Local evidence appears in `runs/reproduced-v4-hosted-*`; `.yukon/score.json` is written only after the hosted workflow finishes. Hosted runs upload `benchmark-score` and `benchmark-evidence` artifacts, including the transaction ledger, judge/repair decisions, proposed patch or spec, and replay. The Lean model covers two pools, one currency and one recipient per pool with unbounded nonnegative integers. It proves the repaired abstract accounting invariant and submitted finite replay, not EVM correspondence, AMM mathematics or arbitrary English fidelity.
+Local evidence appears in `runs/reproduced-v4-hosted-*`; `.yukon/score.json` is written only after the hosted workflow finishes. Hosted runs upload `benchmark-score` and `benchmark-evidence` artifacts, including the transaction ledger, judge/repair decisions, proposed patch or spec, and replay. The active Lean model covers two pools, one currency, and arbitrary recipient identifiers with unbounded nonnegative integers. It proves repaired abstract accounting invariants and the recorded finite multi-recipient replay, not EVM correspondence, AMM mathematics or arbitrary English fidelity.
 
 The seeded fixture collects 99 units in each pool and earns 49 rebate units per pool. Three pool-A claims pay 147, leaving custody of 51, below B's reserve of 99. The repaired control pays 49 once and rejects two repeats, leaving 149. Fee/rebate choices, rounding, retained fees, and environment assumptions still need creator review.

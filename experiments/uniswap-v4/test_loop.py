@@ -12,8 +12,8 @@ from execution import compare, patch_contract
 
 class RepairRoutingTests(unittest.TestCase):
     def setUp(self):
-        self.spec = loop.validate_spec({**json.loads((loop.run.BASE / 'specs/base.json').read_text()),
-                                        'minimum_rebate': 1})
+        self.spec = loop.validate_spec({'schema_version': 1, 'family': 'uniswap-v4-rebate-v1',
+                                        'claim_limit': 'cumulative', 'minimum_rebate': 1})
         self.source = (loop.run.BASE / 'src/RebateHook.sol').read_text()
         self.findings = {'findings': [{'id': 'tx-4'}, {'id': 'tx-5'}]}
         self.judge = json.loads((loop.run.BASE / 'fixtures/contract-repair-responses.json').read_text())[0]['judge']

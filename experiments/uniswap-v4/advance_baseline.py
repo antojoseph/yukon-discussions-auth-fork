@@ -215,6 +215,7 @@ def main():
     history = json.loads(history_path.read_text())
     trace_path = args.report.resolve().parent / 'round-1/trace.json'
     current_trace = loop.run.read_submission(trace_path)
+    score = json.loads(args.score.read_text()) if args.score else None
     if args.resume_stalled:
         if score is not None:
             raise ValueError('Stalled recovery cannot also score a new submission')
@@ -224,7 +225,6 @@ def main():
             raise ValueError('Recovery report does not match the stalled finding')
         if report.get('status') != 'extension_verified':
             raise ValueError('Stalled finding has no fully checked and reviewed repair')
-    score = json.loads(args.score.read_text()) if args.score else None
     should_promote = verified_credit(score, report, current_trace) if score else report.get('status') in (
         'no_demonstrated_mismatch', 'extension_verified')
     promotion = None

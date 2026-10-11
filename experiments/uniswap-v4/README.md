@@ -154,7 +154,8 @@ but do not change the baseline. They set `specs/progress.json` to `stalled`,
 and new hosted submissions stop with an explicit manual-update message. Host
 maintainers must repair and review the baseline, replay the full finding history,
 then publish an updated baseline and set progress back to `active`. The host can
-dispatch `spec.prove v4 repair stalled baseline` on the benchmark branch for the
+dispatch the existing `Benchmark` workflow on the benchmark branch with
+`repair_stalled=true` for the
 recorded finding; it reruns hosted judgment, gives the repair author up to ten
 attempts within a 30-minute budget, and promotes only after exact-candidate
 historical replay and independent reviews pass. Compiler, EVM replay, and review
